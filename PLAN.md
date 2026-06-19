@@ -10,9 +10,10 @@ This file is the **map**. The companion documents are:
 
 - [`AGENTS.md`](AGENTS.md) — how implementation proceeds (human-audited,
   module-by-module, agents scaffold then pause). **Read before writing any code.**
-- [`SPEC.md`](SPEC.md) — the module registry and the index of per-module
-  **datasheets** under [`spec/`](spec/). Each datasheet is the single reference
-  for what a module is, where it comes from, and what it is validated against.
+- [`MODULES.md`](MODULES.md) — the module registry and the index of per-module
+  **datasheets** under [`datasheets/`](datasheets/). Each datasheet is the single
+  reference for what a module is, where it comes from, and what it is validated
+  against.
 - [`CHANGELOG.md`](CHANGELOG.md) — every merged change, tracked.
 
 ---
@@ -37,20 +38,24 @@ Build a calling library that an enterprise can depend on:
 
 ---
 
-## Source of truth
+## The model: spec, reference, derivative
 
-The reference is the validated Rust library **`whatsapp-rust`**
-(`/Users/purpshell/Documents/Programming/whatsapp-rust-voip`), which is KAT-pinned
-and known to work. Its `wacore/src/voip/` is the porting target; its
-`testdata/*.json` and inline `#[test]` cases are the vectors.
+Three layers, kept distinct:
 
-The **protocol rationale** lives in the wacrg spec
-(`/Users/purpshell/Documents/Programming/wacrg/docs/`): `codec/mlow/`,
-`keying/`, `signaling/`, `transport/`. A datasheet links to the relevant page.
+- **wacrg** is the **abstract protocol spec** — think of it as the RFC. It is the
+  agreed, implementation-independent description and becomes the source of future
+  updates. (`/Users/purpshell/Documents/Programming/wacrg/docs/`.)
+- **The reference implementation** is an existing, validated build of that RFC
+  (KAT-pinned, known to work). Its source and its `testdata/*.json` vectors are
+  the ground truth a datasheet ingests **verbatim**. The reference is read into
+  datasheets; it is **never named in meowcaller's code**.
+- **meowcaller** is a clean-room Go **flavor** of the same RFC — a derivative,
+  independent implementation. As we build it we distil the agreed spec into wacrg.
 
-Lineage (for provenance): **WhatsApp WASM → byte-exact Go reference → zapo-caller
-(TS) → whatsapp-rust (Rust)**. The Rust is the most complete and the only one with
-checked-in vectors.
+A **datasheet** (`datasheets/<module>.md`) is the bridge: it carries the reference
+source **verbatim and in full** (no agent summary, no lossy abbreviation) and
+states **how the behavior must be realized in Go**. The implementing agent reads
+the real source, not a paraphrase, then writes clean Go.
 
 Do **not** port from the earlier `dublin`/`meowmeow` calling code. It is the
 unvalidated prior attempt and is out of scope as a source.
@@ -71,7 +76,7 @@ meowcaller/
   types/        shared types and types/events/
   util/         small primitives (hkdfutil, ...) — whatsmeow-style
   internal/kat/ shared test-vector loader
-  spec/         per-module datasheets
+  datasheets/   per-module datasheets
 ```
 
 Pure-Go dependencies only. The codec package has **no** third-party dependencies.
@@ -83,8 +88,8 @@ Every `.go` file carries the project license header.
 
 Work proceeds **module by module**, in dependency order — not in phases. Each
 module is a discrete, human-approved unit with its own datasheet, scaffold, and
-verification. The registry and live status live in [`SPEC.md`](SPEC.md); the order
-of attack:
+verification. The registry and live status live in [`MODULES.md`](MODULES.md); the
+order of attack (1:1 only):
 
 ```
 codec foundation:   rangecoder → toc → mem(heap ROM)
@@ -110,9 +115,20 @@ before it is in service of that.
   seal)`. Each commit updates [`CHANGELOG.md`](CHANGELOG.md).
 - **Changelog:** every merged change recorded under the module, with its
   validation state (`scaffolded` / `implemented` / `KAT-verified`).
+- **Clean Go, no reference leakage:** the Go code (and its comments) **never**
+  names or alludes to the reference library. It reads as an original Go
+  implementation. The only outward link permitted in code is a plain URL to a
+  wacrg page or a wacrg decision artifact, where a pointer genuinely helps.
 - **Comments:** only `// TODO(...)`, `// ASSUMPTION: ...`, or a short note that
   preserves context a future reader would otherwise lose. No narration of what the
-  code plainly does. Doc comments on exported identifiers per Go convention.
+  code plainly does, and no explaining *why* in comments — the why is spoken in
+  the conversation. Doc comments on exported identifiers per Go convention.
+- **Datasheets:** carry the reference source **verbatim** and the Go target.
+  Written one module at a time, when we reach it — not bulk-generated.
+- **Decision artifacts (ADRs):** when a conversation over an implementation detail
+  concludes, a timestamped record of the decision and its rationale is written to
+  **wacrg** — **only on direction**, never autonomously. It may be linked from the
+  Go file by URL.
 - **Tests:** every module ships a KAT test loading the reference vector. `go test
   ./...` is green at every committed step.
 

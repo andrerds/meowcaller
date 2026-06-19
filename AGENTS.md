@@ -35,17 +35,24 @@ the working protocol. It is binding.
 ## The build loop (per module)
 
 ```
-1. READ      spec/<module>.md + the Rust source it cites + the wacrg doc.
+1. READ      datasheets/<module>.md — it embeds the reference source VERBATIM
+             (the real ground truth, not a summary) and the Go target. Read the
+             linked wacrg page for the abstract spec.
 2. SCAFFOLD  create the package file: types, exported signatures, doc comments,
              the KAT test wired to the (copied) vector — but function bodies are
              `// TODO` stubs that state the open question.  → COMMIT, PAUSE.
 3. DIRECT    the human reviews the scaffold and decides how each body should work
-             (or approves porting it 1:1 from the Rust). One function at a time.
-4. IMPLEMENT the approved function(s) only. Keep the KAT test running.
-             → COMMIT per function or small group, PAUSE.
+             (or approves translating the embedded reference 1:1 into Go). One
+             function at a time.
+4. IMPLEMENT the approved function(s) only, as clean Go that never names the
+             reference. Keep the KAT test running.  → COMMIT per fn, PAUSE.
 5. VERIFY    when the module's body is complete, its KAT must pass.
              Update the datasheet status and CHANGELOG.  → COMMIT, PAUSE.
 ```
+
+If the datasheet for the module does not exist yet, write it first (embed the
+reference source verbatim + the Go target, per `datasheets/_TEMPLATE.md`), get it
+reviewed, and only then scaffold. Datasheets are written one module at a time.
 
 Each arrow `→ PAUSE` is a real stop: hand control back to the human. Do not chain
 steps without approval.
@@ -102,6 +109,25 @@ exception.
 - Commit messages state **what was validated** when relevant (which vector,
   pass/fail). No attribution lines. No pushing unless the human asks.
 
+## Decision artifacts (ADRs in wacrg)
+
+When a conversation over a specific implementation detail **ends with a decision**,
+that decision is recorded — but only on the human's direction, never on your own.
+
+- **When:** the conversation has concluded and the human says to record it. Not
+  mid-discussion, not pre-emptively, not for every change — only for decisions
+  worth a timestamp.
+- **Where:** wacrg (`docs/decisions/`), as a timestamped Markdown record stating
+  the decision, the context, the options weighed, and why this one. wacrg is the
+  spec home; the decision becomes part of the agreed record.
+- **How it connects to code:** the Go file may carry a single plain-URL comment to
+  the decision artifact where it genuinely helps a future reader find the rationale
+  — a pointer, not an explanation. Nothing else about the reference or the why goes
+  in the code.
+
+You must know how to write one (a clear, dated ADR) and must **never** write one
+unprompted. Generating decision artifacts autonomously is a violation.
+
 ## Explaining as you go (in conversation)
 
 Narrate the why **proactively**, in the chat, as you work — so the human follows
@@ -122,4 +148,6 @@ before proceeding. None of this lives in code comments.
 - No filling a function body with a guess to avoid stopping.
 - No "it compiles, ship it" — green KAT or it is not done.
 - No silently copying logic whose meaning you cannot explain.
+- No naming or alluding to the reference library anywhere in the Go code.
+- No writing a decision artifact (ADR) without the human's direction.
 - No reuse of the old dublin/meowmeow calling code as a source.
