@@ -56,6 +56,12 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   be re-ingested from the (now-current) local reference when each module is built.
 
 ### mlow/lpc
+- implemented: smplLPCInterpol/Idx (per-subframe NLSF interpolation) + lpcIsStable
+  / lpcStabilize. nlsf2a is a caller-supplied closure (the encoder #16 passes
+  synth's smpl_nlsf2a), so no synth dependency here. No direct vector — verified by
+  1:1 port (build/vet + the module's other KATs stay green); exercised transitively
+  by the encoder. **Module #04 is now fully implemented** (only the interpolation
+  pair lacks a direct KAT).
 - implemented: the analysis front-end — smplWindowLPC20 (sin/cos window) and
   smplLPCAnalyzeWithF2 (zero-pad → real FFT → power spectrum → brute_dct autocorr
   → Schur ac2rc → rc2a → bandwidth expand). The shared portable mixed-radix FFT

@@ -39,9 +39,21 @@ const (
 	nfft4 = SmplLPCNFFT / 4 // 128
 )
 
-// smplWindowLPC20 applies the 20 ms LPC analysis window to a raw analysis buffer,
-// producing the windowed buffer the autocorrelation FFT consumes. useLongWin
-// selects the 64-tap vs 32-tap trailing cosine taper.
+const (
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L291-L292
+	smplSubfrs          = 4
+	maxRCStable float32 = 0.9995
+)
+
+// smplLSFInterpol4Tbl holds the per-subframe interpolation weight rows (idx 0 and
+// the alternative idx 1).
+//
+// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L289-L290
+var smplLSFInterpol4Tbl = [2][smplSubfrs]float32{
+	{0.55, 0.88, 1.0, 1.0},
+	{0.3, 0.65, 0.95, 1.0},
+}
+
 func genSinWin(n int) []float32 {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L39-L43
 	w := make([]float32, n)
@@ -62,6 +74,9 @@ func genCosWin(n int) []float32 {
 	return w
 }
 
+// smplWindowLPC20 applies the 20 ms LPC analysis window to a raw analysis buffer,
+// producing the windowed buffer the autocorrelation FFT consumes. useLongWin
+// selects the 64-tap vs 32-tap trailing cosine taper.
 func smplWindowLPC20(input *[SmplLPCBufLen]float32, useLongWin bool) [SmplLPCBufLen]float32 {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L55-L90
 	win1 := genSinWin(smplLPCWin120msLen)
@@ -90,9 +105,6 @@ func smplWindowLPC20(input *[SmplLPCBufLen]float32, useLongWin bool) [SmplLPCBuf
 	return out
 }
 
-// smplLPCAnalyzeWithF2 runs the full LPC analysis over a windowed buffer: returns
-// the post-bandwidth-expansion monic LPC A[0..16] (A[0]=1) and the power spectrum
-// F2[0..256] that the pitch and signal-mode paths consume.
 // genCosRow accumulates row[k] = cos(omega)*scale, advancing omega by a running
 // fmod in f64 (matching the reference, not cos(k*domega)).
 func genCosRow(domega, scale float64) [nfft4]float64 {
@@ -238,6 +250,9 @@ func bweExpand(a []float32, order int, bwe float32) {
 	}
 }
 
+// smplLPCAnalyzeWithF2 runs the full LPC analysis over a windowed buffer: returns
+// the post-bandwidth-expansion monic LPC A[0..16] (A[0]=1) and the power spectrum
+// F2[0..256] that the pitch and signal-mode paths consume.
 func smplLPCAnalyzeWithF2(windowed *[SmplLPCBufLen]float32) ([SmplLPCOrder + 1]float32, [SmplFLen]float32) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L255-L283
 	var xbuf [SmplLPCNFFT]float32
@@ -268,6 +283,69 @@ func smplLPCAnalyzeWithF2(windowed *[SmplLPCBufLen]float32) ([SmplLPCOrder + 1]f
 	return a, f2
 }
 
+// lpcIsStable reports whether the monic LPC A[0..16] (A[0]=1) is a stable
+// all-pole filter.
+func lpcIsStable(a []float32) bool {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L295-L338
+	order := SmplLPCOrder
+	if a[order]*a[order] > maxRCStable {
+		return false
+	}
+	var a0, a1 [SmplLPCOrder]float64
+	for i := 0; i < order; i++ {
+		a0[i] = float64(a[i+1])
+	}
+	m := order - 1
+	for {
+		den := 1.0 - a0[m]*a0[m]
+		if den == 0.0 {
+			return false
+		}
+		inv := 1.0 / den
+		for k := 0; k < m; k++ {
+			a1[k] = (a0[k] - a0[m]*a0[m-k-1]) * inv
+		}
+		if a1[m-1]*a1[m-1] > float64(maxRCStable) {
+			return false
+		}
+		if m == 1 {
+			return true
+		}
+		m--
+		den = 1.0 - a1[m]*a1[m]
+		if den == 0.0 {
+			return false
+		}
+		inv = 1.0 / den
+		for k := 0; k < m; k++ {
+			a0[k] = (a1[k] - a1[m]*a1[m-k-1]) * inv
+		}
+		if a0[m-1]*a0[m-1] > float64(maxRCStable) {
+			return false
+		}
+		if m == 1 {
+			return true
+		}
+		m--
+	}
+}
+
+// lpcStabilize bandwidth-expands the coefficients until the filter is stable.
+func lpcStabilize(a []float32) {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L341-L353
+	if lpcIsStable(a) {
+		return
+	}
+	iter := 0
+	for {
+		iter++
+		bweExpand(a, SmplLPCOrder, 1.0-float32(iter)*0.001)
+		if lpcIsStable(a) {
+			return
+		}
+	}
+}
+
 // smplLPCInterpol returns the per-subframe interpolated LPC predictor coefficients
 // (interpolation index 0) and the carried last-subframe NLSF. nlsf2a is the
 // decoder's NLSF→A conversion, supplied by the caller.
@@ -276,10 +354,7 @@ func smplLPCInterpol(
 	nlsf2a func(nlsf []float32) []float32,
 ) (predcoefs [4][SmplLPCOrder + 1]float32, ilsf [SmplLPCOrder]float32) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L358-L367
-	// TODO
-	// agent suggestion: delegate to smplLPCInterpolIdx with interpolIdx=0.
-	// human input:
-	return predcoefs, ilsf
+	return smplLPCInterpolIdx(lsf, prevLSF, 0, nlsf2a)
 }
 
 // smplLPCInterpolIdx is smplLPCInterpol for an explicit interpolation-weight row.
@@ -289,12 +364,31 @@ func smplLPCInterpolIdx(
 	nlsf2a func(nlsf []float32) []float32,
 ) (predcoefs [4][SmplLPCOrder + 1]float32, ilsf [SmplLPCOrder]float32) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L370-L407
-	// TODO
-	// agent suggestion: pick the interp row (clamp idx to 1); seed prev from prevLSF
-	// when its last entry is non-zero else from lsf; per subframe interpolate
-	// (1-w)*prev + w*lsf (or copy lsf when w==1), nlsf2a → A, force A[0]=1, then
-	// lpc_stabilize via repeated bandwidth expansion until stable.
-	// human input:
+	interp := &smplLSFInterpol4Tbl[min(interpolIdx, 1)]
+	var prev [SmplLPCOrder]float32
+	if len(prevLSF) == SmplLPCOrder && prevLSF[SmplLPCOrder-1] != 0.0 {
+		copy(prev[:], prevLSF)
+	} else {
+		copy(prev[:], lsf[:SmplLPCOrder])
+	}
+	for j := 0; j < smplSubfrs; j++ {
+		w := interp[j]
+		if w == 1.0 {
+			copy(ilsf[:], lsf[:SmplLPCOrder])
+		} else {
+			for k := 0; k < SmplLPCOrder; k++ {
+				ilsf[k] = (1.0-w)*prev[k] + w*lsf[k]
+			}
+		}
+		a := nlsf2a(ilsf[:])
+		var pc [SmplLPCOrder + 1]float32
+		for i := 0; i < SmplLPCOrder+1 && i < len(a); i++ {
+			pc[i] = a[i]
+		}
+		pc[0] = 1.0
+		lpcStabilize(pc[:])
+		predcoefs[j] = pc
+	}
 	return predcoefs, ilsf
 }
 
