@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# The datasheets embed the upstream Rust reference VERBATIM (byte-exact ground
+# truth — see AGENTS.md). It is authoritative and must never be "fixed", so the
+# CLI review (which can't tell embedded reference from authored code) should skip
+# it. Generated protobuf bindings are skipped too.
+language: en-US
+reviews:
+  path_filters:
+    - "!datasheets/**"
+    - "!**/*.pb.go"
