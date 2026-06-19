@@ -7,6 +7,20 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/pitch — module #07 scaffold (reference `ed12f35`)
+- Scaffolded the pitch/LTP envelope: decode side (`SmplPitchResult`,
+  `DecodeSmplPitch`) and estimator side (`PitchEstState`+`ResetCond`, `PitchResult`,
+  `PitchTables`, `LoadPitchTables`, `SmplPitch`) — all TODO stubs with
+  `Source of truth:` pins. `NumSubframes`/`MaxLTPBufLen` added; `SmplFLen` reused for
+  the f2 spectrum.
+- **KAT blocked on ordering:** `pitch_vectors.json` verifies the chain
+  LSF(0)→pulses(0)→pitch(0) — the range coder must be advanced past the pulse symbols
+  before the pitch block, so the decode KAT (`TestDecodeSmplPitch`) **skips until
+  module #08 pulse (`decode_smpl_pulses`) exists**. Recommend building #08 before
+  KAT-verifying #07's decode.
+- Estimator side is the known encoder soft-divergence (~0.03 vs C); acceptance
+  tolerance is a human decision, not a byte-exact target.
+
 ### reference — all mlow runtime tables migrated to protobuf (reference `ed12f35`)
 - Drove a reference refactor (`refactor(voip): store all mlow runtime tables as
   protobuf`, `ed12f35`, pushed) migrating the three remaining postcard table blobs —
