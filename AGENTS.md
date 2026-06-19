@@ -77,7 +77,7 @@ body uses the **three-line stub block**:
 ```go
 // SealFrame encrypts one media frame with the participant SFrame key.
 func (s *Session) SealFrame(plaintext []byte) ([]byte, error) {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/<sha>/wacore/src/voip/srtp/sframe.rs#L<start>-L<end>
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/<sha>/wacore/src/voip/sframe.rs#L<start>-L<end>
 	// TODO
 	// agent suggestion: AES-GCM with a 16-byte LE-counter nonce; authenticate the
 	// varint header as AAD.
@@ -119,6 +119,10 @@ Comments earn their place or they do not exist:
   Rust reference, pinned to a commit SHA with the function's line range (a real,
   clickable example — this is the actual link in `rangecoder.go`):
   `https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/rangecoder.rs#L203-L226`.
+  The path follows the **reference** tree, not the Go package tree: only the codec
+  lives under `wacore/src/voip/mlow/`; srtp/signaling/transport sources
+  (`sframe.rs`, `stanza.rs`, `stun.rs`, `rtp.rs`, …) sit directly under
+  `wacore/src/voip/`. Locate the real file before linking — do not assume `mlow/`.
   Later, when a specific logic branch has a wacrg decision artifact, its link goes
   in this same slot (a second `// Source of truth:` line at that branch). This is
   the one place the reference may be named in code.
