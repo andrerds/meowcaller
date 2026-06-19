@@ -11,6 +11,12 @@ SFrame, WARP, …)? See [`GLOSSARY.md`](GLOSSARY.md).
 > explain; the human decides how logic flows and what trade-offs are made. When in
 > doubt, stop and ask. A wrong guess committed quietly is the worst outcome.
 
+**Handoffs start here.** Every handoff or session-kickoff instruction — human-to-agent
+or agent-to-agent — **must name this file (`AGENTS.md`) as its starting point**: read
+it first and follow the build loop below before doing anything else. A handoff that
+does not point at `AGENTS.md` is incomplete; treat reading it as the implicit first
+step regardless.
+
 ## The prime directives
 
 1. **Do not decide logic. Scaffold it.** When you reach a function whose behavior
@@ -155,10 +161,10 @@ exception.
 
 ## Commits and changelog
 
-- One module change per commit. Subject: `(<module>: <imperative change>)`.
-  Examples: `(mlow/toc: scaffold smpl TOC parser)`,
-  `(srtp/e2e: implement RFC3711 AES-CM PRF)`,
-  `(mlow/pitch: KAT-verify against pitch_vectors.json)`.
+- One module change per commit. Subject: `<module>: <imperative change>` (no
+  wrapping parentheses). Examples: `mlow/toc: scaffold smpl TOC parser`,
+  `srtp/e2e: implement RFC3711 AES-CM PRF`,
+  `mlow/pitch: KAT-verify against pitch_vectors.json`.
 - Every commit updates [`CHANGELOG.md`](CHANGELOG.md) under the module with the
   new state (`scaffolded` / `implemented` / `KAT-verified`).
 - Before shipping an **implementation** commit (a function body landing), run
@@ -169,11 +175,11 @@ exception.
 - When a commit's change is driven by a reference (Rust) or wacrg spec that
   required a Go update, put the **source-of-truth permalink(s)** in the commit
   **body**, never in the subject. The subject stays the plain
-  `(<module>: <change>)`; the body carries a `Source of truth:` line per driving
+  `<module>: <change>`; the body carries a `Source of truth:` line per driving
   permalink, e.g.:
 
   ```
-  (mlow/lpc: implement forward A2NLSF)
+  mlow/lpc: implement forward A2NLSF
 
   Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/<sha>/wacore/src/voip/mlow/smpl_lpc.rs#L592-L604
   ```
