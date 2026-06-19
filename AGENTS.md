@@ -116,8 +116,9 @@ Comments earn their place or they do not exist:
 - **`// Source of truth: ...`** — required as the first line of every function
   body. It is a **GitHub permalink** to the exact reference lines the function
   ports, so a reader can jump straight to the ground truth. For now that is the
-  Rust reference, pinned to a commit SHA with the function's line range:
-  `https://github.com/oxidezap/whatsapp-rust/blob/<sha>/wacore/src/voip/mlow/rangecoder.rs#L203-L226`.
+  Rust reference, pinned to a commit SHA with the function's line range (a real,
+  clickable example — this is the actual link in `rangecoder.go`):
+  `https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/rangecoder.rs#L203-L226`.
   Later, when a specific logic branch has a wacrg decision artifact, its link goes
   in this same slot (a second `// Source of truth:` line at that branch). This is
   the one place the reference may be named in code.
