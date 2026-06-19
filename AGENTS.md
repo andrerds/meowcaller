@@ -152,6 +152,17 @@ exception.
   new state (`scaffolded` / `implemented` / `KAT-verified`).
 - Commit messages state **what was validated** when relevant (which vector,
   pass/fail). No attribution lines. No pushing unless the human asks.
+- When a commit's change is driven by a reference (Rust) or wacrg spec that
+  required a Go update, put the **source-of-truth permalink(s)** in the commit
+  **body**, never in the subject. The subject stays the plain
+  `(<module>: <change>)`; the body carries a `Source of truth:` line per driving
+  permalink, e.g.:
+
+  ```
+  (mlow/lpc: implement forward A2NLSF)
+
+  Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/<sha>/wacore/src/voip/mlow/smpl_lpc.rs#L592-L604
+  ```
 
 ## Decision artifacts (ADRs in wacrg)
 
