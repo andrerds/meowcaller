@@ -23,32 +23,249 @@ const (
 	silkInt16Max           = 32767
 )
 
+const (
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L26-L32
+	//
+	// smplPIF64 mirrors the reference's `SMPL_PI as f64`: the f32 literal widened,
+	// not full-precision pi.
+	smplPIF64          = float64(float32(3.1415926535897))
+	smplLPCReg         = 5e-7
+	smplLPCBwe         = 0.9999
+	smplLPCWin120msLen = 264
+	smplWin3LongLen    = 64
+	smplWin3ShortLen   = 32
+
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L94
+	nfft4 = SmplLPCNFFT / 4 // 128
+)
+
 // smplWindowLPC20 applies the 20 ms LPC analysis window to a raw analysis buffer,
 // producing the windowed buffer the autocorrelation FFT consumes. useLongWin
 // selects the 64-tap vs 32-tap trailing cosine taper.
+func genSinWin(n int) []float32 {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L39-L43
+	w := make([]float32, n)
+	for i := 0; i < n; i++ {
+		t := (float32(i) + 1.0) / (float32(n) + 1.0) * smplPI / 2.0
+		w[i] = float32(math.Sin(float64(t)))
+	}
+	return w
+}
+
+func genCosWin(n int) []float32 {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L46-L50
+	w := make([]float32, n)
+	for i := 0; i < n; i++ {
+		t := (float32(i) + 1.0) / (float32(n) + 1.0) * smplPI / 2.0
+		w[i] = float32(math.Cos(float64(t)))
+	}
+	return w
+}
+
 func smplWindowLPC20(input *[SmplLPCBufLen]float32, useLongWin bool) [SmplLPCBufLen]float32 {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L55-L90
-	// TODO
-	// agent suggestion: gen_sin_win(264) over the head, copy the 120-sample middle
-	// verbatim, gen_cos_win taper over the trailing 64 (or 32, zeroing the last 32
-	// for the short window). Trig in f64 cast to f32, using the truncated SMPL_PI
-	// literal 3.1415926535897, not math.Pi.
-	// human input:
-	return [SmplLPCBufLen]float32{}
+	win1 := genSinWin(smplLPCWin120msLen)
+	var win3 []float32
+	var win3len int
+	if useLongWin {
+		win3, win3len = genCosWin(smplWin3LongLen), smplWin3LongLen
+	} else {
+		win3, win3len = genCosWin(smplWin3ShortLen), smplWin3ShortLen
+	}
+	var out [SmplLPCBufLen]float32
+	for i := 0; i < smplLPCWin120msLen; i++ {
+		out[i] = input[i] * win1[i]
+	}
+	mid := SmplLPCBufLen - smplLPCWin120msLen - smplWin3LongLen
+	copy(out[smplLPCWin120msLen:smplLPCWin120msLen+mid], input[smplLPCWin120msLen:smplLPCWin120msLen+mid])
+	base := SmplLPCBufLen - smplWin3LongLen
+	for i := 0; i < win3len; i++ {
+		out[base+i] = input[base+i] * win3[i]
+	}
+	if !useLongWin {
+		for s := base + smplWin3ShortLen; s < base+smplWin3LongLen; s++ {
+			out[s] = 0.0
+		}
+	}
+	return out
 }
 
 // smplLPCAnalyzeWithF2 runs the full LPC analysis over a windowed buffer: returns
 // the post-bandwidth-expansion monic LPC A[0..16] (A[0]=1) and the power spectrum
 // F2[0..256] that the pitch and signal-mode paths consume.
+// genCosRow accumulates row[k] = cos(omega)*scale, advancing omega by a running
+// fmod in f64 (matching the reference, not cos(k*domega)).
+func genCosRow(domega, scale float64) [nfft4]float64 {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L98-L107
+	var row [nfft4]float64
+	omega := 0.0
+	twoPi := 2.0 * smplPIF64
+	for k := 0; k < nfft4; k++ {
+		row[k] = math.Cos(omega) * scale
+		omega = math.Mod(omega+domega, twoPi)
+		if omega < 0 {
+			omega += twoPi
+		}
+	}
+	return row
+}
+
+type dctTables struct {
+	cdif     [SmplLPCOrder / 2][nfft4]float64
+	csumdiff [SmplLPCOrder / 4][nfft4]float64
+	csumsum  [SmplLPCOrder / 4][nfft4]float64
+}
+
+func buildDctTables() dctTables {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L115-L143
+	twoPi := 2.0 * smplPIF64
+	nfft := float64(SmplLPCNFFT)
+	var t dctTables
+	for j := 0; j < SmplLPCOrder/2; j++ {
+		t.cdif[j] = genCosRow(float64(1+j*2)*twoPi/nfft, 2.0/nfft)
+	}
+	for j := 0; j < SmplLPCOrder/4; j++ {
+		t.csumdiff[j] = genCosRow(float64(2+j*4)*twoPi/nfft, 1.0/nfft)
+	}
+	for j := 0; j < SmplLPCOrder/4; j++ {
+		t.csumsum[j] = genCosRow(float64(4+j*4)*twoPi/nfft, 1.0/nfft)
+	}
+	return t
+}
+
+// bruteDct derives the autocorrelation R[0..order] from the power spectrum via the
+// precomputed cosine sums. All accumulation in f64.
+func bruteDct(t *dctTables, f2 []float64, order int, r []float64) {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L147-L186
+	half := SmplLPCNFFT / 2
+	f2sum := 0.0
+	var f2dif, f2sumsum, f2sumdif [nfft4]float64
+	for n := 0; n < nfft4; n++ {
+		f2sum += f2[n] + f2[nfft4+n]
+		f2dif[n] = f2[n] - f2[half-n]
+		f2sumsum[n] = f2[n] + f2[half-n] + f2[nfft4+n] + f2[nfft4-n]
+		f2sumdif[n] = f2[n] + f2[half-n] - f2[nfft4+n] - f2[nfft4-n]
+	}
+	f2dif[0] *= 0.5
+	r[0] = (2.0*f2sum - f2[0] + f2[half]) / float64(SmplLPCNFFT)
+	for j := 0; j < order/2; j++ {
+		rtmp := 0.0
+		row := &t.cdif[j]
+		for k := 0; k < nfft4; k++ {
+			rtmp += row[k] * f2dif[k]
+		}
+		r[1+j*2] = rtmp
+	}
+	for j := 0; j < order/4; j++ {
+		rtmp := 0.0
+		row := &t.csumdiff[j]
+		for k := 0; k < nfft4; k++ {
+			rtmp += row[k] * f2sumdif[k]
+		}
+		r[2+j*4] = rtmp
+	}
+	for j := 0; j < order/4; j++ {
+		rtmp := 0.0
+		row := &t.csumsum[j]
+		for k := 0; k < nfft4; k++ {
+			rtmp += row[k] * f2sumsum[k]
+		}
+		r[4+j*4] = rtmp
+	}
+}
+
+// ac2rcDbl converts autocorrelation R[0..order] to reflection coefficients (Schur),
+// with C0[0] *= (1+reg). Each rc[k] is truncated to f32, matching the reference.
+func ac2rcDbl(corr []float64, order int, reg float32, rc []float32) {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L190-L220
+	c0 := make([]float64, order+1)
+	c1 := make([]float64, order+1)
+	copy(c0, corr[:order+1])
+	c0[0] *= float64(1.0 + reg)
+	copy(c1, c0[:order+1])
+	for i := 0; i < order; i++ {
+		rc[i] = 0
+	}
+	for k := 0; k < order; k++ {
+		if c0[k+1] > c1[0] {
+			rc[k] = -1.0
+			break
+		}
+		if c0[k+1] < -c1[0] {
+			rc[k] = 1.0
+			break
+		}
+		if c1[0] == 0.0 {
+			break
+		}
+		rcTmp := -c0[k+1] / c1[0]
+		rc[k] = float32(rcTmp)
+		for n := 0; n < order-k; n++ {
+			ctmp1 := c0[n+k+1]
+			ctmp2 := c1[n]
+			c0[n+k+1] = ctmp1 + ctmp2*rcTmp
+			c1[n] = ctmp2 + ctmp1*rcTmp
+		}
+	}
+}
+
+// rc2a converts reflection coefficients to monic LPC A[0..order] (A[0]=1).
+func rc2a(rc []float32, order int, a []float32) {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L223-L238
+	for i := 1; i < order+1; i++ {
+		a[i] = 0
+	}
+	a[0] = 1.0
+	for k := 0; k < order; k++ {
+		rcTmp := rc[k]
+		for n := 0; n < (k+1)/2; n++ {
+			tmp1 := a[n+1]
+			tmp2 := a[k-n]
+			a[n+1] = tmp1 + tmp2*rcTmp
+			a[k-n] = tmp2 + tmp1*rcTmp
+		}
+		a[k+1] = rcTmp
+	}
+}
+
+// bweExpand bandwidth-expands the monic LPC coefficients: A[i] *= bwe^i.
+func bweExpand(a []float32, order int, bwe float32) {
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L241-L247
+	c := bwe
+	for i := 1; i < order+1; i++ {
+		a[i] *= c
+		c *= bwe
+	}
+}
+
 func smplLPCAnalyzeWithF2(windowed *[SmplLPCBufLen]float32) ([SmplLPCOrder + 1]float32, [SmplFLen]float32) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/674e85164b35ca19115dfebcf605708d15951ee7/wacore/src/voip/mlow/smpl_lpc.rs#L255-L283
-	// TODO
-	// agent suggestion: zero-pad to 512, forward real FFT, power spectrum F2, cast
-	// to f64, brute_dct → R[0..16], ac2rc_dbl (Schur, reg=5e-7) → rc, rc2a → monic
-	// A, bwe_expand (0.9999^i). BLOCKED: needs a 512-pt real FFT (rfft_forward_
-	// ordered) that has no module/datasheet yet — see chat.
-	// human input:
-	return [SmplLPCOrder + 1]float32{}, [SmplFLen]float32{}
+	var xbuf [SmplLPCNFFT]float32
+	copy(xbuf[:SmplLPCBufLen], windowed[:])
+	var f [SmplLPCNFFT]float32
+	rfftForwardOrdered(xbuf[:], f[:])
+
+	var f2 [SmplFLen]float32
+	f2[0] = f[0] * f[0]
+	f2[SmplLPCNFFT/2] = f[1] * f[1]
+	for i := 1; i < SmplLPCNFFT/2; i++ {
+		f2[i] = f[2*i]*f[2*i] + f[2*i+1]*f[2*i+1]
+	}
+	f2d := make([]float64, SmplFLen)
+	for i := 0; i < SmplFLen; i++ {
+		f2d[i] = float64(f2[i])
+	}
+
+	tables := buildDctTables()
+	var r [SmplLPCOrder + 1]float64
+	bruteDct(&tables, f2d, SmplLPCOrder, r[:])
+
+	var rc [SmplLPCOrder]float32
+	ac2rcDbl(r[:], SmplLPCOrder, smplLPCReg, rc[:])
+	var a [SmplLPCOrder + 1]float32
+	rc2a(rc[:], SmplLPCOrder, a[:])
+	bweExpand(a[:], SmplLPCOrder, smplLPCBwe)
+	return a, f2
 }
 
 // smplLPCInterpol returns the per-subframe interpolated LPC predictor coefficients

@@ -56,6 +56,13 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   be re-ingested from the (now-current) local reference when each module is built.
 
 ### mlow/lpc
+- implemented: the analysis front-end — smplWindowLPC20 (sin/cos window) and
+  smplLPCAnalyzeWithF2 (zero-pad → real FFT → power spectrum → brute_dct autocorr
+  → Schur ac2rc → rc2a → bandwidth expand). The shared portable mixed-radix FFT
+  (rfftForwardOrdered + cfft/fftRec/smallestFactor) landed in mlow/fft.go, ported
+  from smpl_perc.rs. TestFrontEndAMatchesC passes: windowing exact (|dwin|≈5e-10),
+  A within 5e-3 on above-floor frames (FFT-internal rounding only, as documented).
+  Only smplLPCInterpol/Idx remain stubbed (need the decoder's nlsf2a closure).
 - implemented: smplA2NLSF16 — the fixed-point silk forward A→NLSF — plus its
   helpers (silk_rshift_round / smlaww / div32 / bwexpander_32 / a2nlsf_trans_poly /
   eval_poly / init / a2nlsf). KAT-verified **bit-exact** against lsf_quant_io.json
