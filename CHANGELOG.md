@@ -26,6 +26,21 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 - `SmplDecoderState` intentionally **omitted** — its `Harm` field is a
   `HarmPostfilterState` from module #11 (not built); lands at #11 / #15 integration.
 
+### mlow/synth — module #10 synth bodies implemented (NOT VALIDATED) (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+- Ported the remaining self-contained synth bodies 1:1: `SmplNLSF2A` (+`smplNLSFPoly`),
+  `SmplGainLin`, `SmplLTPFracGain`, `SmplLTPSubframePred` (+`smplFracLTP`/
+  `smplExcGainApply`/`smplFir8`/`smplFloorF32`/`smplLPCSynthesis`), `SynthInternalFrame`,
+  `NewSmplFrameSynth`, and `QuantNrgRes4` (+ the `nrgresShapeCB4Q10` codebook). Each
+  carries a `// NOT VALIDATED:` marker — no passing KAT exercises them yet (they're
+  e2e-gated via #15); landed ahead of their vector per explicit human direction.
+- `SynthInternalFrame` omits the reference's Region-1 comb / HP postfilter (gated off
+  by `SMPL_TAIL_REGION1`/`SMPL_HP_POSTFILTER`), which need module #11.
+- Enabled the previously-skipped `TestDecoderReconstructsCQlsf` (its prereqs #06 +
+  #10-reconstruct are now built) — passes; removed the duplicate `TestSmplReconstructNLSF`.
+- Still stubbed: `CelpDecState.SynthFrame` / `NewCelpDecState` — the C-float CELP path
+  always runs noise (#13) + postfilter (#11), so it needs those scaffolded first
+  (directive #5). CodeRabbit: 0 findings.
+
 ### mlow/gains — module #09 KAT-verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Implemented `DecodeSmplGains` 1:1 from `decode_smpl_gains`: main+delta gain CDFs,
   the gain reconstruction (deliberate adjacent-rodata read via the heap window), and
