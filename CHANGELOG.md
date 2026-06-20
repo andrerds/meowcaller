@@ -7,6 +7,17 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### mlow/postfilter — scaffold (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
+- Scaffolded the postfilter envelope (synth's CELP prerequisite, per directive #5):
+  `SmplPostfilterState`+`SmplCombPostfilter` (excitation comb), `HpPostfilterState`+
+  `NewHpPostfilterState`/`SmplPfFir3`/`SmplGetHpCoefs`/`SmplFiltArma2`/`SmplHpPostfilter`
+  (post-LPC HP comb), and `HarmPostfilterState`+`NewHarmPostfilterState`/
+  `SmplHarmPostfilter` (per-packet harmonic) — all TODO stubs with `Source of truth:`
+  pins (smpl_postfilter.rs / smpl_harmcomb.rs / smpl_harm_postfilter.rs). KAT
+  `TestPostfilter` skips until the bodies land (enable with hp_postfilter_vectors.raw /
+  harm_postfilter_vectors.raw). This provides the `HarmPostfilterState` type that
+  synth's `SmplDecoderState` and CELP `SynthFrame` need.
+
 ### mlow/synth — module #10 scaffold + NLSF reconstruction verified (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Scaffolded the full low-band synthesis envelope (TODO stubs with `Source of truth:`
   pins spanning smpl_synth.rs / smpl_celpdec.rs / smpl_nrgres.rs): `SmplNLSF2A`,
