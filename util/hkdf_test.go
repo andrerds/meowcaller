@@ -37,7 +37,11 @@ func TestHKDFSHA256RFC5869(t *testing.T) {
 		info := mustHex(t, rec.Info)
 		want := mustHex(t, rec.OKM)
 
-		got := HKDFSHA256(salt, ikm, info, rec.L)
+		got, err := HKDFSHA256(salt, ikm, info, rec.L)
+		if err != nil {
+			t.Errorf("%s: HKDFSHA256: %v", rec.Name, err)
+			continue
+		}
 		if len(got) != rec.L {
 			t.Errorf("%s: length = %d, want %d", rec.Name, len(got), rec.L)
 		}

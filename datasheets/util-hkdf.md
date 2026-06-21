@@ -39,7 +39,7 @@ no bodies**. This is the surface to implement; it is not the implementation.
 ```go
 package util
 
-func HKDFSHA256(salt, ikm, info []byte, length int) []byte
+func HKDFSHA256(salt, ikm, info []byte, length int) ([]byte, error)
 ```
 
 ## Implementation suggestions (guidance, not authoritative)
@@ -49,9 +49,10 @@ func HKDFSHA256(salt, ikm, info []byte, length int) []byte
   `length` bytes.
 - `usize` length → Go `int`. Return `[]byte` of exactly `length` bytes.
 - The reference panics ("expect") when the requested length exceeds the HKDF bound
-  (255 * HashLen = 8160 bytes for SHA-256). All call sites in this codebase request
-  far less, so a panic on overflow is acceptable; alternatively return an error.
-  `TODO(human):` decide panic vs. error for the out-of-bounds length case.
+  (255 * HashLen = 8160 bytes for SHA-256). This port **deviates**: it returns the
+  `crypto/hkdf` error instead of panicking, so a malformed length bubbles up rather
+  than aborting the caller. `crypto/hkdf.Key` already returns `([]byte, error)`, so
+  the wrapper just forwards it.
 - `salt` is passed straight through. When a caller wants the RFC "no salt" behavior,
   it passes an explicit zero/empty slice; do not special-case `nil` differently from
   the reference unless a vector forces it.
