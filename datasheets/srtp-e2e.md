@@ -323,7 +323,7 @@ type E2eSrtpKeys struct {
 	AuthKey   [20]byte
 }
 
-func DeriveE2eKeys(callKey []byte, participantLid string) E2eSrtpKeys
+func DeriveE2eKeys(callKey []byte, participantLid string) (E2eSrtpKeys, bool)
 
 func DeriveE2eKeysFromRaw(rawE2e []byte, participantLid string) (E2eSrtpKeys, bool)
 
@@ -336,6 +336,12 @@ type RocTracker struct {
 }
 
 func (t *RocTracker) Advance(seq uint16) uint32
+
+type RecvRocTracker struct {
+	// unexported state: roc uint32, sL uint16, initialized bool
+}
+
+func (t *RecvRocTracker) GuessRoc(seq uint16) uint32
 ```
 
 ## Implementation suggestions (guidance, not authoritative)
