@@ -36,6 +36,14 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 - This is the last codec (mlow) module; modules #17+ are the crypto/transport/
   signaling stack.
 
+#### encoder front-end build (toward Encode pcm→wire)
+- **smpl_perc ported + KAT-verified** (perc.go): the perceptual-weighting model
+  (`PercModelState`/`SmplPercModel`/`SmplPercAc2a` — mixed-radix FFT power spectrum
+  → bidirectional mel masking → perceptual LPC response) and the bitrate controller
+  (`BitrateController` — per-subframe pulse budget + importance). KATs: FFT
+  round-trip, perc-model smoke (zero→0, DC→R[0]>0, A[0]=1), and the active-unvoiced
+  pulse budget = 23/subframe matching the C dump. (Reuses the existing fft.go.)
+
 ### mlow/decoder — module #15 KAT-verified (audible milestone) (reference `ed12f359a086b28e807ba236f0977af1000859fe`)
 - Implemented the top-level `MlowDecoder` 1:1 from `decoder.rs`: RED strip → TOC
   routing (std-opus / SID / inactive → silence) → active-frame decode (3 chained
