@@ -38,8 +38,6 @@ func loadHbhFields(t *testing.T) hbhFields {
 // TestHbhUplinkDerivationMatchesKAT walks the uplink derivation: 30-byte key,
 // master key/salt split, and the libsrtp session-key expansion, all vs kats.json.
 func TestHbhUplinkDerivationMatchesKAT(t *testing.T) {
-	t.Skip("blocked: srtp/hbh bodies are stubs; enable when implemented")
-
 	k := loadKat(t)
 	hbh := mustHex(t, k.Inputs.HbhKey)
 	hf := loadHbhFields(t)
@@ -81,8 +79,6 @@ func TestHbhUplinkDerivationMatchesKAT(t *testing.T) {
 // TestHbhICMNonceAndCipherMatchKAT checks the AES-ICM nonce and the libsrtp
 // AES-ICM cipher output (with round-trip) against kats.json.
 func TestHbhICMNonceAndCipherMatchKAT(t *testing.T) {
-	t.Skip("blocked: srtp/hbh bodies are stubs; enable when implemented")
-
 	k := loadKat(t)
 	hbh := mustHex(t, k.Inputs.HbhKey)
 	hf := loadHbhFields(t)

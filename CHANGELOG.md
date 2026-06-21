@@ -7,20 +7,20 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
-### srtp/hbh — module #19 scaffolded (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+### srtp/hbh — module #19 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
 - `srtp` package gains the hop-by-hop SRTP path: `SrtpKeyingMaterial` /
   `LibsrtpSessionKeys` types, the two-stage WA-SFU KDF derivation
   (`DeriveHbhSrtpKeyUplink`/`Downlink`, `KeyingFromHbhKey*`), libsrtp session-key
   expansion (`ExpandLibsrtpSessionKeys`), the RTP AES-ICM nonce (`BuildRtpICMNonce`),
-  and the libsrtp AES-ICM cipher (`CryptRtpPayload`). All signatures + doc +
-  `Source of truth` pins, bodies are TODO stubs. **Error-based** per the standing
-  convention: the 30-byte length check yields `errBadHbhKeyLen`, AES invariants will
-  bubble the `crypto/aes` error. The AES-ICM counter is libsrtp's 2-byte-carry
-  variant (byte 15 → carry into 14), **not** a 128-bit CTR — flagged in the stub so
-  the implementation ports it exactly. KAT (`kats.json` hbh_srtp section) wires the
-  derivation + nonce/cipher tests but `t.Skip`'d until bodies land (suite stays
-  green). Datasheet Go envelope refreshed (dropped the non-existent `WaSfuKDF`
-  symbol; error returns). MODULES.md: #19 -> scaffolded.
+  and the libsrtp AES-ICM cipher (`CryptRtpPayload`). Implemented over stdlib
+  `crypto/aes` (block-by-block, no new deps). **Error-based** (no panics): the
+  30-byte length check yields `errBadHbhKeyLen`, AES invariants bubble the
+  `crypto/aes` error. The AES-ICM counter is libsrtp's 2-byte-carry variant
+  (byte 15 → carry into 14), **not** a 128-bit CTR — ported exactly via per-block
+  AES so the vectors match (a `cipher.NewCTR` would carry across all 16 bytes and
+  diverge). KAT (`kats.json` hbh_srtp section, synthetic `hbhKey` — no PII) passes
+  byte-exact: uplink key30, master key/salt split, session key/salt/auth expansion,
+  ICM nonce, and AES-ICM cipher_out + round-trip. CodeRabbit: clean. **KAT-verified**.
 
 ### srtp/e2e — module #18 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
 - New `srtp` package: `E2eSrtpKeys` + `DeriveE2eKeys`/`DeriveE2eKeysFromRaw`

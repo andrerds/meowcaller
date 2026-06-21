@@ -37,7 +37,7 @@ confirmed when the module is reached.
 | 16 | encoder | `mlow` | lpc, lsf_quant, pitch, vad | mlow-encoder.md | `mlow/encode.rs`, `analysis.rs` | `sigmode_ground_truth.json` | verified (full encoder: classifier sigmode KAT, byte-exact entropy coder on 61 frames, pitch estimator exact, CELP + analysis wired; encode->decode tone roundtrip corr 0.89) |
 | 17 | hkdf | `util` | — | util-hkdf.md | (stdlib) | RFC 5869 | verified |
 | 18 | e2e_srtp | `srtp` | hkdf | srtp-e2e.md | `e2e_srtp.rs` | `kats.json` | verified |
-| 19 | hbh_srtp | `srtp` | hkdf | srtp-hbh.md | `hbh_srtp.rs` | `kats.json` | scaffolded |
+| 19 | hbh_srtp | `srtp` | hkdf | srtp-hbh.md | `hbh_srtp.rs` | `kats.json` | verified |
 | 20 | sframe | `srtp` | hkdf | srtp-sframe.md | `sframe.rs` | inline | planned |
 | 21 | stun | `stun` | — | stun.md | `stun.rs` | inline | planned |
 | 22 | rtp | `rtp` | — | rtp.md | `rtp.rs`, `rtcp.rs` | inline | planned |
