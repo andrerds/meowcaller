@@ -15,6 +15,13 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   CDFs. `LoadPitchTables` now calls `buildPitchTablesFromSeed`. Validated **byte-
   identical** to the old JSON tables (all 8 `PitchTables` fields DeepEqual); full KAT
   suite still green. (cc + lsf seeds follow.)
+- **cc tables builder** (`cc_tables.go`, port of `smpl_cc_tables.rs`): expands the
+  2.1 KB `cc_seed.bin` into the nrgres/gains (A/E), LTP-gain (C), and pulse split/
+  runlen (B) CDFs — integer `dcmf_to_cmf` + the SILK fixed-point split/runlen model
+  (`lin2log`/`log2lin`/`sigm_Q15`/`stirling`) + carried gain-reconstruction rodata.
+  Cross-checked **byte-identical to the old `cc_blob`** for every group it replaces
+  (`TestCcTablesVsOldBlob`). Decode/encode rewiring to these accessors + the Group-D
+  `SmplMem` rebuild + dropping `smpl_cc_blob.bin` follow.
 
 ### mlow — upstream sync (reference `ed12f35..41095d4`): robustness guards
 - Ported the two codec-behavioral fixes from the upstream review commit `543302e`
