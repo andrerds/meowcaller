@@ -32,12 +32,13 @@ type SmplPulseResult struct {
 // samples (320), p3 = num subframes (4), p4 = regular flag (1), p6 = config (0/1),
 // s1 = LSF stage-1 selector.
 func DecodeSmplPulses(dec *RangeDecoder, _ *SmplMem, p2, p3, p4, p6, s1 int32) SmplPulseResult {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4/wacore/src/voip/mlow/smpl_pulse.rs#L26-L185
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_pulse.rs#L29-L206
 	n := p2
 	if n < 0 {
 		n = 0
 	}
 	res := SmplPulseResult{Pulses: make([]int32, n)}
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/924eb2c15aa9ffc7362293c74b2888e171831434/wacore/src/voip/mlow/smpl_pulse.rs#L26-L185 (seed cc-table rewire: count/split/runlen from CcTables)
 	cc := LoadCcTables()
 
 	idx := p4 + s1
@@ -116,6 +117,7 @@ func DecodeSmplPulses(dec *RangeDecoder, _ *SmplMem, p2, p3, p4, p6, s1 int32) S
 			split[2] = s2
 			split[3] = (total - sum) - s2
 		}
+		// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/543302e762ef36913b3e2fdf7f84510c43265272/wacore/src/voip/mlow/smpl_pulse.rs#L109-L113 (upstream corrupt-split guard)
 		// C smpl_pulse_coding zeroes the whole split (and n_pulses) on a corrupt -1
 		// from either half, rather than copying the sentinel into res.Subfr.
 		if split[0] == -1 || split[2] == -1 {
@@ -210,7 +212,8 @@ func DecodeSmplPulses(dec *RangeDecoder, _ *SmplMem, p2, p3, p4, p6, s1 int32) S
 // smplSplit3537 splits count pulses across a range, returning the count assigned to
 // the first half (func 3537). The split CDF now comes from the seed-built CcTables.
 func smplSplit3537(dec *RangeDecoder, cc *CcTables, count, granularity int32) int32 {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4/wacore/src/voip/mlow/smpl_pulse.rs#L188-L201
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_pulse.rs#L208-L230
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/924eb2c15aa9ffc7362293c74b2888e171831434/wacore/src/voip/mlow/smpl_pulse.rs#L188-L201 (seed cc-table rewire: SplitCmf)
 	lo := count
 	if granularity < lo {
 		lo = granularity

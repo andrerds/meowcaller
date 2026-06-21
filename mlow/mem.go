@@ -39,7 +39,7 @@ const (
 var memHdrUnused = [3]uint32{0xe7d20, 0xe7ef0, 0xe8096}
 
 func u16Bytes(v []uint32) []byte {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4/wacore/src/voip/mlow/smpl_mem.rs#L129-L130
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/924eb2c15aa9ffc7362293c74b2888e171831434/wacore/src/voip/mlow/smpl_mem.rs#L129-L130
 	b := make([]byte, len(v)*2)
 	for i, x := range v {
 		binary.LittleEndian.PutUint16(b[2*i:], uint16(x))
@@ -52,7 +52,7 @@ func u16Bytes(v []uint32) []byte {
 // byte-for-byte at every address the consumer reads. Groups A/B/C/E moved to the
 // logical CcTables, so GCC/GNrg are 0 here.
 func buildSmplMemFromSeed() *SmplMem {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4/wacore/src/voip/mlow/smpl_mem.rs#L90-L156
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/924eb2c15aa9ffc7362293c74b2888e171831434/wacore/src/voip/mlow/smpl_mem.rs#L90-L156
 	w := buildContourWindow()
 	var regions []smplMemRegion
 	push := func(base uint32, data []byte) { regions = append(regions, smplMemRegion{base: base, data: data}) }
@@ -121,7 +121,7 @@ var (
 // once and returns the shared, read-only window. Groups A/B/C/E moved to the logical
 // CcTables (cc_tables.go), so this no longer reads a cc_blob snapshot.
 func LoadSmplMem() *SmplMem {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4/wacore/src/voip/mlow/smpl_mem.rs#L158-L160
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/924eb2c15aa9ffc7362293c74b2888e171831434/wacore/src/voip/mlow/smpl_mem.rs#L158-L160
 	smplMemOnce.Do(func() { smplMem = buildSmplMemFromSeed() })
 	return smplMem
 }

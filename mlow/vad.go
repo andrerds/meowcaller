@@ -353,6 +353,7 @@ func (s *SmplVadState) ProcessPacket(pcmI16 []int16, framelen int) VadPacketResu
 	const framesPerPacket = 3
 	const packetMs = 60
 	var vadResults [3]float32
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/543302e762ef36913b3e2fdf7f84510c43265272/wacore/src/voip/mlow/smpl_vad.rs#L406-L412 (upstream short-packet guard)
 	// Reject a short capture buffer up front so the fixed-stride frame loop can't
 	// index out of range (mirrors the C VAD's short-packet guard).
 	if len(pcmI16) < framesPerPacket*framelen {

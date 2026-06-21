@@ -16,8 +16,9 @@ type SmplGainResult struct {
 // the per-subframe pulse counts. Group A/E tables come from the seed-built CcTables
 // (the mem param is retained for call-site stability; only pitch lag reads use it).
 func DecodeSmplGains(dec *RangeDecoder, _ *SmplMem, p3 int32, subfrCounts [4]int32) SmplGainResult {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4/wacore/src/voip/mlow/smpl_gains.rs#L18-L67
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_gains.rs#L18-L69
 	var res SmplGainResult
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/924eb2c15aa9ffc7362293c74b2888e171831434/wacore/src/voip/mlow/smpl_gains.rs#L29-L67 (seed cc-table rewire: Group A/E from CcTables)
 	cc := LoadCcTables()
 
 	// main gain (n=85) + delta gain (n=99)

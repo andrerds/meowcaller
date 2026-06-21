@@ -31,8 +31,9 @@ type SmplPitchResult struct {
 // DecodeSmplPitch decodes the LTP gains and pitch lags. p3 = num subframes,
 // p6 = config, subfrCounts = per-subframe pulse counts (from the pulse decode).
 func DecodeSmplPitch(dec *RangeDecoder, mem *SmplMem, st *SmplLsfState, p2, p3, p6 int32, subfrCounts [4]int32) SmplPitchResult {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4/wacore/src/voip/mlow/smpl_pitch.rs#L44-L198
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_pitch.rs#L32-L198
 	res := SmplPitchResult{FiltIdx: [4]int32{-1, -1, -1, -1}}
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/924eb2c15aa9ffc7362293c74b2888e171831434/wacore/src/voip/mlow/smpl_pitch.rs#L60-L88 (seed cc-table rewire: Group C LTP gains from CcTables; lag block below still mem)
 	cc := LoadCcTables()
 
 	// --- LTP gains loop (Group C, served from CcTables; the lag block below still
@@ -263,7 +264,7 @@ var (
 // blocksegs bitstream + integer DCMF→CDF) is in pitch_seed.go (buildPitchTablesFromSeed)
 // and is bit-identical to the old smpl_pitch_tables.json blob.
 func LoadPitchTables() *PitchTables {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4/wacore/src/voip/mlow/smpl_pitch_seed.rs#L111-L158
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/dbf10066a15f5c8c83c27908ad4284873331e1a4/wacore/src/voip/mlow/smpl_pitch_seed.rs#L111-L158
 	pitchTablesOnce.Do(func() { pitchTables = buildPitchTablesFromSeed() })
 	return pitchTables
 }

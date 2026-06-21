@@ -50,6 +50,7 @@ func TestEncodeRoundTripsATone(t *testing.T) {
 		}
 	}
 	t.Logf("encode→decode round-trip best correlation: %.4f", best)
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/543302e762ef36913b3e2fdf7f84510c43265272/wacore/src/voip/mlow/encode.rs#L505-L509 (upstream tightened tone-roundtrip threshold)
 	if best <= 0.7 {
 		t.Errorf("encode→decode round-trip correlation too low: %.4f (want >0.7)", best)
 	}

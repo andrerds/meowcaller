@@ -356,7 +356,8 @@ func encodeSmplLsf(enc *RangeEncoder, t *SmplTables, st *SmplLsfState, config, i
 // re-derive the count interval and split symbols from the per-subframe counts, then
 // replay the recorded magnitude/sign symbols.
 func encodeSmplPulses(enc *RangeEncoder, _ *SmplMem, p2, p3, p4, p6, s1 int32, pp *SmplPulseParams) {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4/wacore/src/voip/mlow/encode.rs#L153-L271
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/encode.rs#L153-L271
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/924eb2c15aa9ffc7362293c74b2888e171831434/wacore/src/voip/mlow/encode.rs#L153-L271 (seed cc-table rewire: split/runlen from CcTables)
 	cc := LoadCcTables()
 	idx := p4 + s1
 	bByte := int32(Mem8Static(0xe8990 + uint32(p6*3+idx)))
@@ -444,7 +445,8 @@ func encodeSmplPulses(enc *RangeEncoder, _ *SmplMem, p2, p3, p4, p6, s1 int32, p
 
 // encodeSplit3537 is the inverse of smplSplit3537: encode the first-half count s0.
 func encodeSplit3537(enc *RangeEncoder, cc *CcTables, count, granularity int32, s0 int32) {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4/wacore/src/voip/mlow/encode.rs#L273-L292
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/encode.rs#L273-L292
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/924eb2c15aa9ffc7362293c74b2888e171831434/wacore/src/voip/mlow/encode.rs#L273-L292 (seed cc-table rewire: SplitCmf)
 	lo := count
 	if granularity < lo {
 		lo = granularity
@@ -463,7 +465,8 @@ func encodeSplit3537(enc *RangeEncoder, cc *CcTables, count, granularity int32, 
 // encodeSmplGains is the inverse of DecodeSmplGains: encode main/delta gain, then
 // per-subframe nrgres with the same gain-derived address shift.
 func encodeSmplGains(enc *RangeEncoder, _ *SmplMem, p3 int32, subfrCounts [4]int32, gp *SmplGainParams) {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4/wacore/src/voip/mlow/encode.rs#L294-L335
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/encode.rs#L294-L335
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/924eb2c15aa9ffc7362293c74b2888e171831434/wacore/src/voip/mlow/encode.rs#L294-L335 (seed cc-table rewire: Group A/E from CcTables)
 	cc := LoadCcTables()
 	enc.EncodeCDF(gp.GainMain, cc.NrgresGain4())
 	enc.EncodeCDF(gp.GainDelta, cc.NrgresShape4())
@@ -506,7 +509,8 @@ func encodeSmplGains(enc *RangeEncoder, _ *SmplMem, p3 int32, subfrCounts [4]int
 // then the lag contour (blockseg selector + per-block lag indices) via the pitch
 // tables, mutating the predictor state identically.
 func encodeSmplPitch(enc *RangeEncoder, _ *SmplMem, st *SmplLsfState, p2, p3, p6 int32, subfrCounts [4]int32, pp *SmplPitchParams) {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4/wacore/src/voip/mlow/encode.rs#L337-L405
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/encode.rs#L337-L405
+	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/924eb2c15aa9ffc7362293c74b2888e171831434/wacore/src/voip/mlow/encode.rs#L337-L405 (seed cc-table rewire: Group C LTP gains from CcTables)
 	cc := LoadCcTables()
 
 	var gainAccum int32
