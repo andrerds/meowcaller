@@ -86,13 +86,32 @@ func connectClient(ctx context.Context) (*whatsmeow.Client, error) {
 // peer's LID — the address the call's E2E keys and SSRCs derive from. This is the
 // "resolve the LID before the call" step; a phone JID is mapped via the LID store,
 // seeded by a usync query if not cached.
+// parseCallTarget turns a CLI target into a JID. A string with '@' is a real JID (a
+// LID to call directly, or a phone JID to resolve); a bare string is a phone number.
+// ParseJID does NOT error on a missing '@' (it puts the whole string in the server
+// field), so we branch on '@' ourselves rather than trusting a parse error.
+func parseCallTarget(target string) (types.JID, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return types.EmptyJID, errors.New("empty call target")
+	}
+	if strings.ContainsRune(target, '@') {
+		jid, err := types.ParseJID(target)
+		if err != nil {
+			return types.EmptyJID, fmt.Errorf("parse target JID %q: %w", target, err)
+		}
+		return jid, nil
+	}
+	return types.NewJID(strings.TrimPrefix(target, "+"), types.DefaultUserServer), nil
+}
+
 func resolvePeerLID(ctx context.Context, cli *whatsmeow.Client, target string) (types.JID, error) {
-	jid, err := types.ParseJID(target)
+	jid, err := parseCallTarget(target)
 	if err != nil {
-		jid = types.NewJID(strings.TrimPrefix(strings.TrimSpace(target), "+"), types.DefaultUserServer)
+		return types.EmptyJID, err
 	}
 	if jid.Server == types.HiddenUserServer {
-		return jid, nil // already a LID
+		return jid, nil // already a LID — call it directly
 	}
 	if lid, err := cli.Store.LIDs.GetLIDForPN(ctx, jid); err == nil && !lid.IsEmpty() {
 		return lid, nil
