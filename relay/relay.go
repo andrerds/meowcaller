@@ -7,6 +7,7 @@ import (
 	"github.com/pion/datachannel"
 	"github.com/pion/dtls/v3"
 	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
+	"github.com/pion/logging"
 	"github.com/pion/sctp"
 )
 
@@ -150,10 +151,12 @@ func ConnectRelayMedia(relayAddr *net.UDPAddr) (*RelayMediaChannel, error) {
 	}
 	cleanup = append(cleanup, assoc.Close)
 
-	// 4. Pre-negotiated DataChannel id=0.
+	// 4. Pre-negotiated DataChannel id=0. LoggerFactory is required: datachannel
+	// does not default it and dereferences it on construction.
 	dc, err := datachannel.Dial(assoc, 0, &datachannel.Config{
-		Negotiated: true,
-		Label:      DataChannelLabel,
+		Negotiated:    true,
+		Label:         DataChannelLabel,
+		LoggerFactory: logging.NewDefaultLoggerFactory(),
 	})
 	if err != nil {
 		return fail(fmt.Errorf("datachannel dial: %w", err))
