@@ -25,8 +25,6 @@ func iota32() []byte {
 
 // TestOutgoingLifecycle pins the outgoing transition table.
 func TestOutgoingLifecycle(t *testing.T) {
-	t.Skip("blocked: session bodies are stubs; enable when implemented")
-
 	s := NewOutgoingSession("CID", peerJID(), creatorJID())
 	if s.Phase() != CallPhaseIdle {
 		t.Fatalf("phase = %d, want Idle", s.Phase())
@@ -55,8 +53,6 @@ func TestOutgoingLifecycle(t *testing.T) {
 
 // TestIncomingStartsRinging pins the incoming start phase and the no-Calling rule.
 func TestIncomingStartsRinging(t *testing.T) {
-	t.Skip("blocked: session bodies are stubs; enable when implemented")
-
 	s := NewIncomingSession("CID", peerJID(), creatorJID())
 	if s.Phase() != CallPhaseRinging {
 		t.Fatalf("phase = %d, want Ringing", s.Phase())
@@ -71,8 +67,6 @@ func TestIncomingStartsRinging(t *testing.T) {
 
 // TestMediaPipelineRoundTrips checks the protect→unprotect composition loopback.
 func TestMediaPipelineRoundTrips(t *testing.T) {
-	t.Skip("blocked: session bodies are stubs; enable when implemented")
-
 	callKey := iota32()
 	lid := "222222222222222:0@lid"
 	tx, err := NewMediaPipeline(callKey, lid, lid, 0x12345678, 960)
@@ -102,8 +96,6 @@ func TestMediaPipelineRoundTrips(t *testing.T) {
 
 // TestProtectUsesSelfLidForSend pins the send keystream to the self LID.
 func TestProtectUsesSelfLidForSend(t *testing.T) {
-	t.Skip("blocked: session bodies are stubs; enable when implemented")
-
 	callKey := iota32()
 	selfLid, peerLid := "111111111111111:0@lid", "222222222222222:0@lid"
 	ssrc := uint32(0x12345678)
@@ -137,8 +129,6 @@ func TestProtectUsesSelfLidForSend(t *testing.T) {
 
 // TestRecvUsesPeerLidForRecv pins the recv keystream to the peer LID.
 func TestRecvUsesPeerLidForRecv(t *testing.T) {
-	t.Skip("blocked: session bodies are stubs; enable when implemented")
-
 	callKey := iota32()
 	selfLid, peerLid := "111111111111111:0@lid", "222222222222222:0@lid"
 	ssrc := uint32(0x12345678)

@@ -45,7 +45,7 @@ confirmed when the module is reached.
 | 24 | warp | `srtp` | stun, e2e_srtp, hbh_srtp | srtp-warp.md | `warp.rs` | `kats.json` | verified |
 | 25 | stanza | `signaling` | whatsmeow/binary | signaling-stanza.md | `stanza.rs` | inline | verified |
 | 26 | relay | `relay` | pion | relay.md | `src/voip/transport.rs` | inline | verified (classify; pion transport NOT VALIDATED — live-relay only) |
-| 27 | session | `meowcaller` | decoder, encoder, sframe, relay, stanza | session.md | `src/voip/session.rs` | (integration) | planned |
+| 27 | session | `meowcaller` | e2e_srtp, rtp, ssrc, warp | session.md | `src/voip/session.rs` | inline | verified |
 | 28 | call | `meowcaller` | session, stanza | call.md | `src/voip/*`, `stanza.rs` | (integration) | planned |
 
 First audible milestone: **decoder (#15)** decodes the real

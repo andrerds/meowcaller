@@ -44,57 +44,72 @@ type CallSession struct {
 // NewOutgoingSession starts an outgoing call session in the Idle phase.
 func NewOutgoingSession(callID string, peerJID, callCreator types.JID) *CallSession {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/src/voip/session.rs#L45-L54
-	// TODO
-	// agent suggestion: &CallSession{CallID, PeerJID, CallCreator, Direction: Outgoing, phase: Idle}.
-	// human input:
-	return nil
+	return &CallSession{
+		CallID:      callID,
+		PeerJID:     peerJID,
+		CallCreator: callCreator,
+		Direction:   CallDirectionOutgoing,
+		phase:       CallPhaseIdle,
+	}
 }
 
 // NewIncomingSession starts an incoming call session in the Ringing phase.
 func NewIncomingSession(callID string, peerJID, callCreator types.JID) *CallSession {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/src/voip/session.rs#L56-L65
-	// TODO
-	// agent suggestion: &CallSession{..., Direction: Incoming, phase: Ringing}.
-	// human input:
-	return nil
+	return &CallSession{
+		CallID:      callID,
+		PeerJID:     peerJID,
+		CallCreator: callCreator,
+		Direction:   CallDirectionIncoming,
+		phase:       CallPhaseRinging,
+	}
 }
 
 // Phase returns the current lifecycle phase.
 func (s *CallSession) Phase() CallPhase {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/src/voip/session.rs#L67-L69
-	// TODO
-	// agent suggestion: return s.phase.
-	// human input:
-	return CallPhaseIdle
+	return s.phase
 }
 
 // IsActive reports whether the call is in the Active phase.
 func (s *CallSession) IsActive() bool {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/src/voip/session.rs#L71-L73
-	// TODO
-	// agent suggestion: return s.phase == CallPhaseActive.
-	// human input:
-	return false
+	return s.phase == CallPhaseActive
 }
 
 // IsEnded reports whether the call has ended.
 func (s *CallSession) IsEnded() bool {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/src/voip/session.rs#L75-L77
-	// TODO
-	// agent suggestion: return s.phase == CallPhaseEnded.
-	// human input:
-	return false
+	return s.phase == CallPhaseEnded
 }
 
 // TransitionTo attempts a phase transition, returning false (no-op) if illegal.
 // Ended is reachable from anything except Ended.
 func (s *CallSession) TransitionTo(next CallPhase) bool {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/src/voip/session.rs#L81-L97
-	// TODO
-	// agent suggestion: port the match arms exactly (Ended sink; →Ended ok; Idle→Calling only when
-	// Outgoing; linear Calling→Ringing→Connecting→Active; a==b idempotent); set phase iff ok.
-	// human input:
-	return false
+	var ok bool
+	switch {
+	case s.phase == CallPhaseEnded:
+		ok = false
+	case next == CallPhaseEnded:
+		ok = true
+	case s.phase == CallPhaseIdle && next == CallPhaseCalling:
+		ok = s.Direction == CallDirectionOutgoing
+	case s.phase == CallPhaseCalling && next == CallPhaseRinging:
+		ok = true
+	case s.phase == CallPhaseRinging && next == CallPhaseConnecting:
+		ok = true
+	case s.phase == CallPhaseConnecting && next == CallPhaseActive:
+		ok = true
+	case s.phase == next:
+		ok = true
+	default:
+		ok = false
+	}
+	if ok {
+		s.phase = next
+	}
+	return ok
 }
 
 // MediaPipeline composes the outbound (protect) and inbound (unprotect) E2E 1:1
@@ -112,24 +127,35 @@ type MediaPipeline struct {
 // the self LID, recv keys from the peer LID (an interop-load-bearing convention).
 func NewMediaPipeline(callKey []byte, selfJID, peerJID string, ssrc, samplesPerPacket uint32) (*MediaPipeline, error) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/src/voip/session.rs#L118-L133
-	// TODO
-	// agent suggestion: sendKeys = srtp.DeriveE2eKeys(callKey, rtp.FormatE2ESrtpParticipantID(selfJID));
-	// recvKeys from peerJID; bubble the derive error; stream = rtp.NewRtpStream(ssrc, samples, false);
-	// warpMITagLen = srtp.WarpMITagLen.
-	// human input:
-	return nil, nil
+	sendKeys, err := srtp.DeriveE2eKeys(callKey, rtp.FormatE2ESrtpParticipantID(selfJID))
+	if err != nil {
+		return nil, err
+	}
+	recvKeys, err := srtp.DeriveE2eKeys(callKey, rtp.FormatE2ESrtpParticipantID(peerJID))
+	if err != nil {
+		return nil, err
+	}
+	return &MediaPipeline{
+		sendKeys:     sendKeys,
+		recvKeys:     recvKeys,
+		warpMITagLen: srtp.WarpMITagLen,
+		stream:       rtp.NewRtpStream(ssrc, samplesPerPacket, false),
+	}, nil
 }
 
 // ProtectAudio wraps an Opus payload in an RTP WARP header, E2E-SRTP encrypts, and
 // appends the WARP MI tag.
 func (p *MediaPipeline) ProtectAudio(opusPayload []byte) ([]byte, error) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/src/voip/session.rs#L136-L150
-	// TODO
-	// agent suggestion: header := stream.NextPacket(opus, false); roc := sendRoc.Advance(header.Seq);
-	// hdr := rtp.EncodeRtpHeader(&header); enc, err := srtp.CryptPayload(&sendKeys, ssrc, seq, roc, opus)
-	// (bubble); packet := hdr||enc; return srtp.AppendWarpMITag(sendKeys.AuthKey[:], packet, roc, tagLen).
-	// human input:
-	return nil, nil
+	header := p.stream.NextPacket(opusPayload, false)
+	roc := p.sendRoc.Advance(header.SequenceNumber)
+	packet := rtp.EncodeRtpHeader(&header)
+	encrypted, err := srtp.CryptPayload(&p.sendKeys, header.Ssrc, header.SequenceNumber, roc, opusPayload)
+	if err != nil {
+		return nil, err
+	}
+	packet = append(packet, encrypted...)
+	return srtp.AppendWarpMITag(p.sendKeys.AuthKey[:], packet, roc, p.warpMITagLen), nil
 }
 
 // UnprotectAudio strips the WARP MI tag (not verified), parses the header, and
@@ -137,10 +163,22 @@ func (p *MediaPipeline) ProtectAudio(opusPayload []byte) ([]byte, error) {
 // malformed packet.
 func (p *MediaPipeline) UnprotectAudio(packet []byte) (rtp.RtpHeader, []byte, bool) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/src/voip/session.rs#L155-L175
-	// TODO
-	// agent suggestion: guard len>=12+tagLen; withoutTag = packet[:len-tagLen]; ParseRtpHeader +
-	// RtpHeaderByteLength (ok-gate); roc := recvRoc.GuessRoc(header.Seq); decrypt cipher via
-	// srtp.CryptPayload(&recvKeys,...); any miss/err → (zero, nil, false).
-	// human input:
-	return rtp.RtpHeader{}, nil, false
+	if len(packet) < 12+p.warpMITagLen {
+		return rtp.RtpHeader{}, nil, false
+	}
+	withoutTag := packet[:len(packet)-p.warpMITagLen]
+	header, ok := rtp.ParseRtpHeader(withoutTag)
+	if !ok {
+		return rtp.RtpHeader{}, nil, false
+	}
+	headerLen, ok := rtp.RtpHeaderByteLength(withoutTag)
+	if !ok || len(withoutTag) <= headerLen {
+		return rtp.RtpHeader{}, nil, false
+	}
+	roc := p.recvRoc.GuessRoc(header.SequenceNumber)
+	plain, err := srtp.CryptPayload(&p.recvKeys, header.Ssrc, header.SequenceNumber, roc, withoutTag[headerLen:])
+	if err != nil {
+		return rtp.RtpHeader{}, nil, false
+	}
+	return header, plain, true
 }

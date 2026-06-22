@@ -7,6 +7,24 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### session — module #27 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+- New root package `meowcaller` porting `src/voip/session.rs`: the `CallSession`
+  phase state machine (validated transitions — `Ended` sink, `Idle→Calling` only when
+  outgoing, the linear chain, idempotent self-loop) and `MediaPipeline`, which
+  composes the verified `rtp` + `srtp` modules into the protect/unprotect path (RTP
+  WARP header → E2E-SRTP encrypt → WARP MI tag, and the reverse; recv ROC tracked
+  internally via `RecvRocTracker`). Built on whatsmeow `types.JID`. **Error-based**
+  per the lower modules: `NewMediaPipeline`/`ProtectAudio` return `error`;
+  `UnprotectAudio` keeps the reference's `Option` shape as `(rtp.RtpHeader, []byte,
+  bool)`. KAT (inline, synthetic LIDs — no PII) passes: both lifecycle tables, the
+  pipeline round-trip, and the **send=self-LID / recv=peer-LID ciphertext pinning**
+  (the interop-load-bearing key direction). Composition only — the byte-level crypto
+  is vector-pinned in its own modules. Datasheet refreshed to the current source
+  (internal `RecvRocTracker`, `Option` new, roc-less unprotect, the new
+  `recv_uses_peer_lid_for_recv` test) and pinned; deps corrected (it composes
+  e2e_srtp/rtp/ssrc/warp, not the codec/relay/stanza the registry had guessed).
+  **KAT-verified.**
+
 ### relay — module #26 (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
 - New `relay` package porting `src/voip/transport.rs`: `ClassifyRelayPacket` (the
   pure first-byte STUN/RTCP/RTP demux) is **KAT-verified** against the reference's
