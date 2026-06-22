@@ -6,7 +6,7 @@ require (
 	github.com/pion/datachannel v1.6.0
 	github.com/pion/dtls/v3 v3.1.2
 	github.com/pion/sctp v1.9.4
-	go.mau.fi/whatsmeow v0.0.0-20260305215846-fc65416c22c4
+	go.mau.fi/whatsmeow v0.0.0-20260609091626-4e622162b959
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -26,7 +26,8 @@ require (
 	go.mau.fi/libsignal v0.2.2 // indirect
 	go.mau.fi/util v0.9.9 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
-	golang.org/x/net v0.54.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 )
