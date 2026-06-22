@@ -7,6 +7,21 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### srtp/warp — module #24 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
+- Complete the `srtp/warp` module: `WarpExtProfile`/`WarpAudioPiggybackExt`/
+  `WarpMITagLen` constants, `AudioPiggybackExtensionFor` (now implemented — fills the
+  #22 rtp piggyback prerequisite), and `ComputeWarpMITag`/`AppendWarpMITag` (the
+  HMAC-SHA1 WARP MESSAGE-INTEGRITY tag over `packet || roc_be32`). Implemented over
+  stdlib `crypto/hmac`+`crypto/sha1`+`encoding/binary` (no new deps; SHA-1 is
+  protocol-mandated by WARP, not a security choice). `AudioPiggybackExtensionFor`
+  returns `*uint32` (the Go mapping of `Option<u32>`) so the rtp sequencer assigns it
+  directly to `RtpHeader.ExtensionWord`. KAT (`kats.json` `warp_mi_tag4` over the
+  sample packet + piggyback gating, synthetic — no PII) passes byte-exact.
+  CodeRabbit: clean. Datasheet envelope corrected to `*uint32`. **KAT-verified.**
+  Note: `sframe.DeriveWarpAuthKey` remains a stub — warp's MI tag uses the SRTP auth
+  key, not the warp-auth key, so that helper still has no vector (validate at
+  session/relay).
+
 ### rtp/ssrc — module #23 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
 - `rtp` package gains SSRC derivation + participant-LID helpers:
   `DeriveWasmParticipantSsrc` (HKDF-SHA256 with salt=slot-word LE32, ikm=callId,

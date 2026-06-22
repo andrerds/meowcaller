@@ -38,11 +38,11 @@ confirmed when the module is reached.
 | 17 | hkdf | `util` | — | util-hkdf.md | (stdlib) | RFC 5869 | verified |
 | 18 | e2e_srtp | `srtp` | hkdf | srtp-e2e.md | `e2e_srtp.rs` | `kats.json` | verified |
 | 19 | hbh_srtp | `srtp` | hkdf | srtp-hbh.md | `hbh_srtp.rs` | `kats.json` | verified |
-| 20 | sframe | `srtp` | hkdf | srtp-sframe.md | `sframe.rs` | `kats.json` | verified (sframe core; DeriveWarpAuthKey scaffolded for #24) |
+| 20 | sframe | `srtp` | hkdf | srtp-sframe.md | `sframe.rs` | `kats.json` | verified (sframe core; DeriveWarpAuthKey stub — no KAT yet, validate at session/relay) |
 | 21 | stun | `stun` | — | stun.md | `stun.rs` | `kats.json` | verified |
 | 22 | rtp | `rtp` | warp | rtp.md | `rtp.rs`, `rtcp.rs` | `kats.json` | verified |
 | 23 | ssrc | `rtp` | hkdf | rtp-ssrc.md | `ssrc.rs` | `kats.json` | verified |
-| 24 | warp | `srtp` | stun, e2e_srtp, hbh_srtp | srtp-warp.md | `warp.rs` | inline | scaffolded (piggyback only; full module pending) |
+| 24 | warp | `srtp` | stun, e2e_srtp, hbh_srtp | srtp-warp.md | `warp.rs` | `kats.json` | verified |
 | 25 | stanza | `signaling` | — | signaling-stanza.md | `stanza.rs` | inline | planned |
 | 26 | relay | `relay` | warp, stun, rtp | relay.md | `src/voip/transport.rs` | (integration) | planned |
 | 27 | session | `meowcaller` | decoder, encoder, sframe, relay, stanza | session.md | `src/voip/session.rs` | (integration) | planned |

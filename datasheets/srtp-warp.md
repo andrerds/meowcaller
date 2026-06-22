@@ -107,12 +107,17 @@ const (
 
 var WarpAudioPiggybackExt = [4]byte{0x30, 0x01, 0x00, 0x00}
 
-func AudioPiggybackExtensionFor(packetIndex int, enabled bool, startPacket int) (uint32, bool)
+func AudioPiggybackExtensionFor(packetIndex int, enabled bool, startPacket int) *uint32
 
 func ComputeWarpMITag(authKey, packetWithoutTag []byte, roc uint32, tagLen int) []byte
 
 func AppendWarpMITag(authKey, packetWithoutTag []byte, roc uint32, tagLen int) []byte
 ```
+
+`audio_piggyback_extension_for` returns `Option<u32>`, mapped to Go `*uint32` (not
+`(uint32, bool)`) so it matches `rtp.RtpHeader.ExtensionWord` (also `*uint32`) and the
+rtp sequencer can assign it directly. The HMAC `expect` never fails (any key length),
+so the MI-tag functions need no error return.
 
 ## Implementation suggestions (guidance, not authoritative)
 

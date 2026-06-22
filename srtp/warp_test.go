@@ -9,8 +9,6 @@ import (
 
 // TestWarpMITagMatchesKAT checks the 4-byte WARP MI tag over the sample packet.
 func TestWarpMITagMatchesKAT(t *testing.T) {
-	t.Skip("blocked: srtp/warp bodies are stubs; enable when implemented")
-
 	raw, err := os.ReadFile("testdata/kats.json")
 	if err != nil {
 		t.Fatalf("read kats.json: %v", err)
@@ -45,8 +43,6 @@ func TestWarpMITagMatchesKAT(t *testing.T) {
 
 // TestAudioPiggybackExtension checks the piggyback gating and the extension word.
 func TestAudioPiggybackExtension(t *testing.T) {
-	t.Skip("blocked: srtp/warp bodies are stubs; enable when implemented")
-
 	if AudioPiggybackExtensionFor(0, true, WarpPiggybackStartPacket) != nil {
 		t.Error("packet 0 should have no piggyback extension")
 	}
