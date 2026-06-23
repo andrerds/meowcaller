@@ -79,6 +79,32 @@ func findRelay(n *waBinary.Node) *waBinary.Node {
 	return nil
 }
 
+// findChild recursively locates the first node with the given tag under n.
+func findChild(n *waBinary.Node, tag string) *waBinary.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Tag == tag {
+		return n
+	}
+	kids := n.GetChildren()
+	for i := range kids {
+		if r := findChild(&kids[i], tag); r != nil {
+			return r
+		}
+	}
+	return nil
+}
+
+// decodeLatency reverses the relay-latency wire encoding (0x2000000 + rttMs).
+func decodeLatency(enc string) uint32 {
+	v, err := strconv.ParseUint(enc, 10, 32)
+	if err != nil || v < 0x0200_0000 {
+		return 0
+	}
+	return uint32(v) - 0x0200_0000
+}
+
 func attrUint(n *waBinary.Node, key string) uint32 {
 	v, _ := strconv.ParseUint(n.AttrGetter().String(key), 10, 32)
 	return uint32(v)

@@ -432,6 +432,49 @@ func (c *coordinator) onRelay(callID string, data *waBinary.Node) {
 	c.maybeStart(callID, m)
 }
 
+// onRelayLatency answers the caller's relaylatency probes with our own measured
+// latency to the same relays (inbound/callee only). This is the callee's half of
+// the relay election; without it the server can't pick a common relay and the
+// relay never bridges the caller's media to us. The reference's RelayLatencyParams
+// omits <destination> devices for the inbound callee, so we do too.
+func (c *coordinator) onRelayLatency(e *events.CallRelayLatency) {
+	c.mu.Lock()
+	m := c.cmap[e.CallID]
+	c.mu.Unlock()
+	if m == nil || m.direction != "incoming" {
+		return
+	}
+	rl := findChild(e.Data, "relaylatency")
+	if rl == nil {
+		return
+	}
+	sent := 0
+	for i := range rl.GetChildren() {
+		te := &rl.GetChildren()[i]
+		if te.Tag != "te" {
+			continue
+		}
+		ag := te.AttrGetter()
+		resp := signaling.BuildRelayLatency(&signaling.RelayLatencyParams{
+			CallID:       e.CallID,
+			To:           e.From,
+			CallCreator:  e.CallCreator,
+			LatencyMs:    decodeLatency(ag.String("latency")),
+			RelayName:    ag.String("relay_name"),
+			AddressBytes: nodeBytes(te),
+		})
+		resp.Attrs["id"] = c.cli.GenerateMessageID()
+		if err := c.cli.DangerousInternals().SendNode(c.ctx, resp); err != nil {
+			log.Printf("send relaylatency: %v", err)
+			return
+		}
+		sent++
+	}
+	if sent > 0 {
+		log.Printf("↩ answered %d relaylatency probe(s) for %s (callee relay election)", sent, e.CallID)
+	}
+}
+
 // onCallAck handles an <ack class="call"> node. For an outbound offer the relay
 // allocation arrives here (whatsmeow otherwise drops the ack), which is what lets
 // the caller bring up media.
@@ -508,6 +551,7 @@ func runListen(ctx context.Context, autoAccept bool) error {
 		case *events.CallRelayLatency:
 			if autoAccept {
 				coord.onRelay(e.CallID, e.Data)
+				coord.onRelayLatency(e)
 			}
 		case *events.CallTransport:
 			if autoAccept {
