@@ -1533,17 +1533,3 @@ func smplDistributeFcbSurv(numsurv []int16, maxPulses, totSurv int32) {
 		}
 	}
 }
-
-// smplCelpUvGain is the linear FCB gain for an unvoiced subframe gain index.
-func smplCelpUvGain(gainIdx int16) float32 {
-	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/ed12f359a086b28e807ba236f0977af1000859fe/wacore/src/voip/mlow/smpl_celp.rs#L2187-L2191
-	t := getCelpTables()
-	idx := int(gainIdx)
-	if idx < 0 {
-		idx = 0
-	}
-	if idx > uvGainIdxLen {
-		idx = uvGainIdxLen
-	}
-	return t.fcbgainsUV[idx]
-}

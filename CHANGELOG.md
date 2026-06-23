@@ -13,6 +13,14 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   items were datasheet staleness, a provable CDF-accessor equivalence (#16 LR
   filt), and one genuine stub (#20). Fixes below.
 
+### mlow/celp — drop dead smplCelpUvGain; pin + refresh mlow-celp datasheet
+- Refreshing `mlow-celp.md` to the current `smpl_celp.rs` surfaced that the
+  reference deleted three unused helpers as dead code (`e7b106d`):
+  `smpl_reverse_into`, `smpl_interpol`, `smpl_celp_uv_gain`. Two were never ported;
+  `smplCelpUvGain` existed in `celp_enc.go` with no callers (linter-flagged) —
+  removed to mirror the reference. No behavior change (it was unused; `fcbgainsUV`
+  /`uvGainIdxLen` keep their live users). Datasheet pinned at 41095d4.
+
 ### datasheets — pin + refresh all mlow datasheets to 41095d4
 - All 16 mlow datasheets (#01–#16) now carry the `Reference pinned at:
   41095d4e6ba4610e054e9ede3af1d5e88a83faee` line. 8 had current verbatim and only

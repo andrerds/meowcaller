@@ -16,39 +16,39 @@ exercised by the reference's `encode_*_runs` smoke tests (shape/range invariants
 end-to-end, by the encoder tone round-trip (`encode_round_trips_a_tone`, corr > 0.5)
 once wired into `smpl_analyze_frame_st`.
 
+**Reference pinned at:** `41095d4e6ba4610e054e9ede3af1d5e88a83faee` (`wacore/src/voip/mlow/smpl_celp.rs`)
+
 ## Reference source (verbatim — authoritative)
 
 ### `smpl_celp.rs`
 
 ```rust
-//! MLow (smpl_audio_codec) CELP EXCITATION ENCODER — faithful transcription of Meta's
-//! `smpl_celp.c` / `smpl_celp_util.c` / `smpl_codec_util.c` / `smpl_filt.c` / `smpl_helpers.c`.
+//! MLow (smpl_audio_codec) CELP excitation encoder.
 //!
-//! This is the correctness-critical per-subframe analyzer that the heuristic in `analysis.rs`
-//! replaced (and got wrong, ~6.5x too loud). It builds a perceptually weighted impulse response
-//! (`Phi`), an LTP/ACB basis for voiced frames, runs the FCB pulse search (greedy + delayed-decision
-//! beam), and RD-quantizes the adaptive- and fixed-codebook gains against entropy tables built once
-//! at init. Every formula, loop order, and index mirrors the C; floats are f32 where C uses float,
-//! and `smpl_dcmf_to_cmf` keeps integer truncating division because the RD winner depends on it
-//! bit-exactly.
+//! This is the correctness-critical per-subframe analyzer. It builds a perceptually weighted impulse
+//! response (`Phi`), an LTP/ACB basis for voiced frames, runs the FCB pulse search (greedy +
+//! delayed-decision beam), and RD-quantizes the adaptive- and fixed-codebook gains against entropy
+//! tables built once at init. `smpl_dcmf_to_cmf` keeps integer truncating division because the RD
+//! winner depends on it bit-exactly.
 //!
 //! Self-contained on purpose: small leaf helpers are duplicated locally rather than shared with
 //! `smpl_synth.rs` / `smpl_harmcomb.rs`, so the pipeline integration can be wired separately without
 //! coupling.
+// The encode path is not yet fully wired: a duplicated leaf vector op (smpl_sub_vec_inplace) and the
+// CelpSubframeOut.n_pulses/exc_lpc outputs the consumer doesn't read yet are scaffolding, so
+// dead_code is allowed module-wide.
 #![allow(dead_code)]
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::excessive_precision)]
-// SMPL_PI is the verbatim C literal `3.1415926535897f`; keep it, do not swap for std PI.
+// SMPL_PI is the exact literal `3.1415926535897f` the codec uses; keep it, do not swap for std PI.
 #![allow(clippy::approx_constant)]
-// C clamps as min(max(x, lo), hi); the equivalent `.max().min()` form mirrors the source order.
+// The clamp is written as min(max(x, lo), hi); the `.max().min()` form preserves that operation order.
 #![allow(clippy::manual_clamp)]
 
 use std::sync::OnceLock;
 
-// ---------------------------------------------------------------------------
-// Tier 0 — constants (smpl_defines.h / smpl_tables.h / smpl_nrgres_tables.h)
-// ---------------------------------------------------------------------------
+// Tier 0: constants.
 
 const SMPL_PI: f32 = 3.1415926535897;
 
@@ -88,10 +88,10 @@ const SMPL_CELP_MAX_RATES: usize = 2;
 
 const N_GAIN_STEPS: usize = 2;
 
-// Raw constant tables, copied verbatim from smpl_tables.c.
+// Raw constant codec tables.
 
 #[rustfmt::skip]
-const SMPL_CB_ACBGAINS_LR_Q14: [i16; SMPL_ACBG_N * SMPL_ACBG_M] = [
+pub(super) const SMPL_CB_ACBGAINS_LR_Q14: [i16; SMPL_ACBG_N * SMPL_ACBG_M] = [
     2812, 2484,
     0, 0,
     -362, 2465,
@@ -131,7 +131,7 @@ const SMPL_CB_ACBGAINS_HR_Q14: [i16; SMPL_ACBG_N * SMPL_ACBG_M] = [
 ];
 
 #[rustfmt::skip]
-const SMPL_ACBGAINS_DCMF_LR: [u8; (SMPL_ACBG_N + 1) * SMPL_ACBG_N] = [
+pub(super) const SMPL_ACBGAINS_DCMF_LR: [u8; (SMPL_ACBG_N + 1) * SMPL_ACBG_N] = [
     103, 70, 48, 3, 122, 135, 47, 192, 2, 255, 99, 96, 186, 194, 4, 28,
     161, 90, 76, 3, 181, 60, 37, 219, 2, 132, 81, 146, 255, 43, 3, 36,
     114, 222, 55, 6, 203, 34, 42, 154, 6, 255, 33, 209, 225, 78, 6, 45,
@@ -194,9 +194,7 @@ const SMPL_INTERPOL_KERNEL: [f32; 2 * SMPL_LTP_INTERPOL_DELAY] = [
     0.61704546, -0.15997475, 0.057590906, -0.018698348, 0.00484772, -0.0009153038, 0.000110641144, -6.392598e-6,
 ];
 
-// ---------------------------------------------------------------------------
-// Tier 1 — leaf math helpers (smpl_codec_util.c / smpl_filt.c / smpl_helpers.c)
-// ---------------------------------------------------------------------------
+// Tier 1: leaf math helpers.
 
 #[inline]
 fn smpl_dot_prod(a: &[f32], b: &[f32], l: usize) -> f32 {
@@ -223,13 +221,6 @@ fn smpl_reverse(x: &mut [f32], l: usize) {
     }
 }
 
-#[inline]
-fn smpl_reverse_into(x: &[f32], y: &mut [f32], l: usize) {
-    for i in 0..l {
-        y[i] = x[l - i - 1];
-    }
-}
-
 // x -= y
 #[inline]
 fn smpl_sub_vec_inplace(y: &[f32], x: &mut [f32], l: usize) {
@@ -251,14 +242,6 @@ fn smpl_sub_vec(y: &[f32], z: &[f32], x: &mut [f32], l: usize) {
 fn smpl_add_vec_inplace(y: &[f32], x: &mut [f32], l: usize) {
     for i in 0..l {
         x[i] += y[i];
-    }
-}
-
-// x = y + z
-#[inline]
-fn smpl_add_vec(y: &[f32], z: &[f32], x: &mut [f32], l: usize) {
-    for i in 0..l {
-        x[i] = y[i] + z[i];
     }
 }
 
@@ -307,8 +290,8 @@ fn smpl_celp_q(num: &[f32], den: &[f32], l: usize, q: &mut [f32]) {
 }
 
 /// `y[n] = sum C[.] * x[.]` for a symmetric Toeplitz multiply. `C` must carry the trailing zero at
-/// index `2*L_resp-1` and `x` must be readable up to `N + L_resp` (zero padded past `N`), exactly as C
-/// relies on (it deliberately reads one extra zero element for SIMD friendliness).
+/// index `2*L_resp-1` and `x` must be readable up to `N + L_resp` (zero padded past `N`): the inner
+/// loop deliberately reads one extra zero element for SIMD friendliness.
 fn smpl_mult_symtoepl2(c: &[f32], l_resp: usize, x: &[f32], y: &mut [f32], n: usize) {
     debug_assert!(2 * l_resp <= n);
     debug_assert!(c[2 * l_resp - 1] == 0.0);
@@ -334,7 +317,7 @@ fn smpl_mult_symtoepl2(c: &[f32], l_resp: usize, x: &[f32], y: &mut [f32], n: us
 }
 
 /// 16th-order AR filter. The 16-sample state sits in `y[base-16 .. base]`; `x`/`y` are slices whose
-/// index 0 corresponds to C's `x[0]`/`y[0]` (so callers pass an offset slice for the history).
+/// index 0 is the logical sample 0 (so callers pass an offset slice for the history).
 fn smpl_filt_ar16(x: &[f32], n: usize, coef: &[f32], y_base: usize, y: &mut [f32]) {
     debug_assert!(coef[0] == 1.0);
     for nn in 0..n {
@@ -387,19 +370,15 @@ fn smpl_filt_ma9(
     }
 }
 
-#[inline]
-fn smpl_interpol(x: &[f32], x_base: usize, y: &mut [f32], y_base: usize, n: usize) {
-    for nn in 0..n {
-        let mut ret = 0.0f32;
-        for i in 0..8 {
-            ret += (x[x_base + nn + i] + x[x_base + nn + 15 - i]) * SMPL_INTERPOL_KERNEL[i];
-        }
-        y[y_base + nn] = ret;
-    }
+/// `smpl_dcmf_to_cmf` returning the cumulative u16 CDF (len `dcmf.len()+1`).
+pub(super) fn dcmf_to_cmf(dcmf: &[u8]) -> Vec<u16> {
+    let mut cmf = vec![0u16; dcmf.len() + 1];
+    smpl_dcmf_to_cmf(dcmf, dcmf.len(), &mut cmf);
+    cmf
 }
 
 /// INTEGER, bit-exact: `cmf[n+1] = min((dcmf[n]+1)^2, 65535)`, then truncating-int normalize. Note the
-/// `(32767 - dcmf_len)` is the dcmf length, not the cmf length — replicated verbatim.
+/// `(32767 - dcmf_len)` uses the dcmf length, not the cmf length; this is intentional, not a typo.
 fn smpl_dcmf_to_cmf(dcmf: &[u8], dcmf_len: usize, cmf: &mut [u16]) {
     let mut sum: i32 = 0;
     for n in 0..dcmf_len {
@@ -424,8 +403,8 @@ fn smpl_cmf_to_bits(cmf: &[u16], cmf_len: usize, bits: &mut [f32]) {
     }
 }
 
-/// argmax (lowest index on tie). The C tournament tree resolves ties to the lowest index; a forward
-/// scan that only replaces on strict `>` is equivalent.
+/// argmax (lowest index on tie). The reference resolves ties to the lowest index; a forward scan that
+/// only replaces on strict `>` is equivalent.
 #[inline]
 fn smpl_get_maxi(x: &[f32], x_len: usize) -> usize {
     let mut i = 0usize;
@@ -439,9 +418,9 @@ fn smpl_get_maxi(x: &[f32], x_len: usize) -> usize {
     i
 }
 
-/// Top-K indices, descending by value. The C `smpl_get_maxi_K` returns the K largest in descending
-/// order; we reproduce that (the deldec search relies on `idx[0]` being the best). Ties resolve to the
-/// lowest index, matching the tournament tree's effective behavior for distinct floats.
+/// Top-K indices, descending by value: the K largest in descending order (the deldec search relies on
+/// `idx[0]` being the best). Ties resolve to the lowest index, matching the reference for distinct
+/// floats.
 fn smpl_get_maxi_k(x: &[f32], idx: &mut [i32], x_len: usize, k: usize) {
     // Partial selection: repeatedly take the current max, masking taken indices.
     let mut taken = vec![false; x_len];
@@ -461,9 +440,7 @@ fn smpl_get_maxi_k(x: &[f32], idx: &mut [i32], x_len: usize, k: usize) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tier 2 — table builder (smpl_create_celp_tables)
-// ---------------------------------------------------------------------------
+// Tier 2: entropy/gain table builder.
 
 pub(crate) struct CelpTables {
     acbgains_cmf_lr: [u16; (SMPL_ACBG_N + 1) * (SMPL_ACBG_N + 1)],
@@ -565,9 +542,7 @@ fn build_celp_tables() -> CelpTables {
     t
 }
 
-// ---------------------------------------------------------------------------
-// Tier 3 — LTP / ACB synthesis (smpl_celp_util.c)
-// ---------------------------------------------------------------------------
+// Tier 3: LTP / ACB synthesis.
 
 #[inline]
 fn acb_dequant(low_rate: bool, acb_idx: i32, acb_g: &mut [f32; SMPL_ACBG_M]) {
@@ -582,8 +557,8 @@ fn acb_dequant(low_rate: bool, acb_idx: i32, acb_g: &mut [f32; SMPL_ACBG_M]) {
     }
 }
 
-/// `adjust_acbgains` with `high_boost==0` is a no-op (the encoder always passes 0), so the synth is
-/// just the 3-tap symmetric basis combination.
+/// Gain adjustment with `high_boost==0` is a no-op (the encoder always passes 0), so the synth is just
+/// the 3-tap symmetric basis combination.
 fn acb_synthesize(
     fcb_subfrlen: usize,
     acb_basis: &[f32],
@@ -603,7 +578,7 @@ fn smpl_pitch_sharp(x: &mut [f32], lag: usize, l: usize) {
 
 /// Builds the LTP basis (basis0 = pitch-extended excitation, basis1 = its 3-tap symmetric neighbor
 /// sum) per 40-sample sub-block, and MUTATES `state` in place by extending the excitation forward.
-/// `state` is the full `acb_state`; `state_off` is C's `&state[state_len - n_lags*40]`.
+/// `state` is the full `acb_state`; `state_off` is `&state[state_len - n_lags*40]`.
 fn smpl_syn_ltp_basis(
     lags: &[f32],
     n_lags: usize,
@@ -612,7 +587,7 @@ fn smpl_syn_ltp_basis(
     acb_basis: &mut [f32],
 ) {
     debug_assert!(state_len > 0);
-    let mut p = state_len - n_lags * SMPL_LAG_SUBFRLEN; // index into `state` == C's p_exclpc_end[0]
+    let mut p = state_len - n_lags * SMPL_LAG_SUBFRLEN; // index into `state` at the excitation tail
     for subfr in 0..n_lags {
         let i_lag = lags[subfr].floor() as i32;
         if (i_lag as f32) == lags[subfr] {
@@ -677,9 +652,7 @@ fn smpl_syn_ltp_basis(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tier 4 — FCB search (smpl_celp_util.c)
-// ---------------------------------------------------------------------------
+// Tier 4: FCB search.
 
 #[derive(Clone)]
 struct Fcb {
@@ -745,8 +718,8 @@ fn check_if_better(wnrg: f32, nrg_thr: &mut f32, wnrg_per_pulse: f32) -> bool {
     }
 }
 
-/// `PhiFlip` column for `col`: C returns `&PhiFlip[SMPL_MAX_SF_LEN - col]`; the returned slice is read
-/// at arbitrary non-negative indices, so we return the start offset into `phi_flip`.
+/// `PhiFlip` column for `col`: the column starts at `PhiFlip[SMPL_MAX_SF_LEN - col]` and is read at
+/// arbitrary non-negative indices, so this returns the start offset into `phi_flip`.
 #[inline]
 fn phi_col_offset(col: i32) -> i32 {
     SMPL_MAX_SF_LEN as i32 - col
@@ -759,9 +732,7 @@ fn non_zero_range(col: i32, perc_resp_len: usize, fcb_subfrlen: usize) -> (usize
     (lo, hi)
 }
 
-// ---------------------------------------------------------------------------
-// Public output of the per-subframe encoder
-// ---------------------------------------------------------------------------
+// Public output of the per-subframe encoder.
 
 pub(crate) struct CelpSubframeOut {
     pub pulses: [Vec<i16>; SMPL_CELP_MAX_RATES],
@@ -771,9 +742,7 @@ pub(crate) struct CelpSubframeOut {
     pub exc_lpc: Vec<f32>,
 }
 
-// ---------------------------------------------------------------------------
-// ACBG params (carried within a single encode_subframe call)
-// ---------------------------------------------------------------------------
+// ACBG params, carried within a single encode_subframe call.
 
 struct AcbgParams {
     werr_in: f32,
@@ -782,9 +751,7 @@ struct AcbgParams {
     acb_basis_phi: Vec<f32>, // SMPL_ACBG_M * fcb_subfrlen
 }
 
-// ---------------------------------------------------------------------------
-// Persistent encoder state
-// ---------------------------------------------------------------------------
+// Persistent encoder state.
 
 pub(crate) struct CelpEncoder {
     // state_wght has SMPL_LPC_ORDER samples of history before the "logical" start; logical index 0
@@ -810,6 +777,30 @@ pub(crate) struct CelpEncoder {
     imp_lpc_buf: Vec<f32>, // SMPL_MAX_SF_LEN + SMPL_LPC_ORDER, logical start at SMPL_LPC_ORDER
     phi: Vec<f32>,         // SMPL_MAX_SF_LEN
     phi_flip: Vec<f32>,    // 2 * SMPL_MAX_SF_LEN
+    // Greedy-FCB-search scratch (per subframe + per pulse), each fully rewritten over [0..fcb_subfrlen]
+    // before it is read, so it carries no state between calls.
+    fcb_greedy: FcbGreedyScratch,
+}
+
+/// Per-call working buffers for `smpl_fcb_search`, hoisted off the per-frame/per-pulse hot path.
+struct FcbGreedyScratch {
+    d_abs: [f32; SMPL_MAX_SF_LEN],
+    d_sign: [f32; SMPL_MAX_SF_LEN],
+    num: [f32; SMPL_MAX_SF_LEN],
+    den: [f32; SMPL_MAX_SF_LEN],
+    q: [f32; SMPL_MAX_SF_LEN],
+}
+
+impl Default for FcbGreedyScratch {
+    fn default() -> Self {
+        FcbGreedyScratch {
+            d_abs: [0.0; SMPL_MAX_SF_LEN],
+            d_sign: [0.0; SMPL_MAX_SF_LEN],
+            num: [0.0; SMPL_MAX_SF_LEN],
+            den: [0.0; SMPL_MAX_SF_LEN],
+            q: [0.0; SMPL_MAX_SF_LEN],
+        }
+    }
 }
 
 impl CelpEncoder {
@@ -826,11 +817,11 @@ impl CelpEncoder {
 
         let acb_state_len = fcb_subfrlen + SMPL_MAXPITCH_LEN + SMPL_LTP_INTERPOL_DELAY;
 
-        // The C `sgntrs` are random u64; only used to dedup identical pulse SETS in the deldec beam.
-        // A deterministic distinct-per-position sequence is correctness-equivalent (a different beam
-        // tie-break can pick a different but equally valid candidate; bit-exactness vs C here needs
-        // C rand() replication, which is not required for a correct encoder). Use a fixed LCG so the
-        // result is reproducible.
+        // `sgntrs` are random u64; only used to dedup identical pulse SETS in the deldec beam. A
+        // deterministic distinct-per-position sequence is correctness-equivalent (a different beam
+        // tie-break can pick a different but equally valid candidate; bit-exact reproduction of the
+        // reference's RNG is not required for a correct encoder). Use a fixed LCG so the result is
+        // reproducible.
         let mut sgntrs = vec![0u64; SMPL_MAX_SF_LEN];
         let mut s: u64 = 0x9E3779B97F4A7C15;
         for v in sgntrs.iter_mut() {
@@ -867,6 +858,7 @@ impl CelpEncoder {
             imp_lpc_buf: vec![0.0; SMPL_MAX_SF_LEN + SMPL_LPC_ORDER],
             phi: vec![0.0; SMPL_MAX_SF_LEN],
             phi_flip: vec![0.0; 2 * SMPL_MAX_SF_LEN],
+            fcb_greedy: FcbGreedyScratch::default(),
         }
     }
 
@@ -888,9 +880,7 @@ impl CelpEncoder {
     }
 }
 
-// ---------------------------------------------------------------------------
-// FCB search scratch (mirrors the deldec-relevant fields of CelpScratch)
-// ---------------------------------------------------------------------------
+// FCB search scratch: the deldec-relevant working buffers.
 
 struct FcbSearchScratch {
     // Double-buffered candidate states (read/write ping-pong).
@@ -940,11 +930,9 @@ impl FcbSearchScratch {
 }
 
 impl CelpEncoder {
-    // -----------------------------------------------------------------------
-    // Greedy FCB search (smpl_fcb_search)
-    // -----------------------------------------------------------------------
+    // Greedy FCB search.
     fn smpl_fcb_search(
-        &self,
+        &mut self,
         d: &[f32],
         wnrg_per_pulse: &[f32; SMPL_CELP_MAX_RATES],
         fcb_pulses_max: &[i16; SMPL_CELP_MAX_RATES],
@@ -958,19 +946,27 @@ impl CelpEncoder {
         let perc_resp_len = self.perc_resp_len;
         *n_pulses = [0; SMPL_CELP_MAX_RATES];
 
+        // Split-borrow: the read-only impulse-response (`phi`/`phi_flip`) and the pooled scratch are
+        // disjoint encoder fields, so the search keeps both without re-allocating.
+        let phi = &self.phi;
+        let phi_flip = &self.phi_flip;
+        let FcbGreedyScratch {
+            d_abs,
+            d_sign,
+            num,
+            den,
+            q,
+        } = &mut self.fcb_greedy;
+
         let mut positions = [0i32; SMPL_MAX_PULSES_PER_SF];
-        let mut d_abs = vec![0.0f32; SMPL_MAX_SF_LEN];
-        let mut d_sign = vec![0.0f32; SMPL_MAX_SF_LEN];
-        let mut num = vec![0.0f32; SMPL_MAX_SF_LEN];
-        let mut den = vec![0.0f32; SMPL_MAX_SF_LEN];
-        let phi0 = self.phi[0];
-        calc_d_abs_and_sign(d, fcb_subfrlen, &mut d_abs, &mut d_sign);
+        let phi0 = phi[0];
+        calc_d_abs_and_sign(d, fcb_subfrlen, d_abs, d_sign);
 
         for i in 0..fcb_subfrlen {
             den[i] = phi0 + 1e-16;
         }
         num[..fcb_subfrlen].copy_from_slice(&d_abs[..fcb_subfrlen]);
-        positions[0] = smpl_get_maxi(&num, fcb_subfrlen) as i32;
+        positions[0] = smpl_get_maxi(num, fcb_subfrlen) as i32;
         let mut nrg_thr = [0.0f32; SMPL_CELP_MAX_RATES];
         let p0 = positions[0] as usize;
         let ratio = num[p0] / den[p0];
@@ -1006,19 +1002,18 @@ impl CelpEncoder {
             let mut d_den = 0.0f32;
             for i in 0..pulse_nr - 1 {
                 let pi = positions[i] as usize;
-                d_den += self.phi_flip[(col_off + pi as i32) as usize] * d_sign[pi];
+                d_den += phi_flip[(col_off + pi as i32) as usize] * d_sign[pi];
             }
             d_den *= 2.0 * sgn;
-            d_den += self.phi_flip[(col_off + position) as usize];
+            d_den += phi_flip[(col_off + position) as usize];
             for i in 0..fcb_subfrlen {
                 den[i] += d_den;
             }
             for i in nz0..nz1 {
-                den[i] += 2.0 * sgn * d_sign[i] * self.phi_flip[(col_off + i as i32) as usize];
+                den[i] += 2.0 * sgn * d_sign[i] * phi_flip[(col_off + i as i32) as usize];
             }
-            let mut q = vec![0.0f32; SMPL_MAX_SF_LEN];
-            smpl_celp_q(&num, &den, fcb_subfrlen, &mut q);
-            positions[pulse_nr] = smpl_get_maxi(&q, fcb_subfrlen) as i32;
+            smpl_celp_q(num, den, fcb_subfrlen, q);
+            positions[pulse_nr] = smpl_get_maxi(q, fcb_subfrlen) as i32;
             let pp = positions[pulse_nr] as usize;
             if check_if_better(
                 q[pp],
@@ -1065,9 +1060,7 @@ impl CelpEncoder {
 }
 
 impl CelpEncoder {
-    // -----------------------------------------------------------------------
-    // add_pulse (deldec helper)
-    // -----------------------------------------------------------------------
+    // add_pulse: deldec beam helper.
     fn add_pulse(
         &self,
         sc: &mut FcbSearchScratch,
@@ -1082,7 +1075,7 @@ impl CelpEncoder {
         let fcb_subfrlen = self.fcb_subfrlen;
         let perc_resp_len = self.perc_resp_len;
 
-        // Snapshot the read-side fcb (the C `fcb` arg is a mutable copy in sc.fcbs[fcb_idx_in]).
+        // Snapshot the read-side fcb (the `fcb` arg is a mutable copy in sc.fcbs[fcb_idx_in]).
         let fcb_pos_new = sc.fcbs[fcb_idx_in].pos_new;
         let fcb_sign_new = sc.fcbs[fcb_idx_in].sign_new;
         let fcb_n_pulses = sc.fcbs[fcb_idx_in].n_pulses;
@@ -1241,9 +1234,7 @@ impl CelpEncoder {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Delayed-decision beam FCB search (smpl_fcb_search_deldec)
-    // -----------------------------------------------------------------------
+    // Delayed-decision beam FCB search.
     fn smpl_fcb_search_deldec(
         &self,
         d: &[f32],
@@ -1330,8 +1321,8 @@ impl CelpEncoder {
         sc.swap_rw();
         let mut q = vec![0.0f32; SMPL_MAX_SF_LEN];
         {
-            // fcb_state is the slot just written (now read_idx==write_idx-prev), C reads it via the
-            // local `fcb_state` pointer which still points at fcb_states[old write_idx][0].
+            // fcb_state is the slot just written: after the swap, read_idx points back at
+            // fcb_states[old write_idx][0].
             let ri = sc.read_idx; // after swap, this equals old write_idx
             if pitch_sharp == 0.0 {
                 q[..fcb_subfrlen].copy_from_slice(&sc.fcb_states[ri][0].num[..fcb_subfrlen]);
@@ -1390,7 +1381,7 @@ impl CelpEncoder {
                 sc.fcb_candidates_size = 0;
                 sc.unique_sgntr_size = 0;
                 let fcbs_size = sc.fcbs_size;
-                // C increments `idx` lockstep with the loop counter, so idx == i.
+                // `idx` increments lockstep with the loop counter, so idx == i.
                 for i in 0..fcbs_size {
                     self.add_pulse(
                         &mut sc,
@@ -1532,9 +1523,7 @@ impl CelpEncoder {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tier 5 — gain quant (static functions in smpl_celp.c)
-// ---------------------------------------------------------------------------
+// Tier 5: gain quantization.
 
 #[inline]
 fn smpl_wnrg2(c: &[f32], x: &[f32]) -> f32 {
@@ -1761,9 +1750,7 @@ impl CelpEncoder {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tier 6 — main per-subframe encoder (smpl_celp_encoder)
-// ---------------------------------------------------------------------------
+// Tier 6: main per-subframe encoder.
 
 impl CelpEncoder {
     pub(crate) fn encode_subframe(
@@ -1783,7 +1770,7 @@ impl CelpEncoder {
         // imp_lpc = filt_ar16(perc_wght_resp, L_resp, predcoef) * hanning_win.
         // The 16-sample AR lead (imp_lpc_buf[0..SMPL_LPC_ORDER]) is zeroed once at construction and
         // never written by the filter (it only writes indices >= SMPL_LPC_ORDER), so it stays zero
-        // across calls exactly as C's one-time memset of imp_lpc_ does.
+        // across calls, matching the reference's one-time zero of imp_lpc_.
         smpl_filt_ar16(
             perc_wght_resp,
             l_resp,
@@ -1806,7 +1793,7 @@ impl CelpEncoder {
                 imp_lpc_rev[rev_base + i] = imp[l_resp - i - 1];
             }
         }
-        // memset(imp_lpc_rev - (L_resp-1), 0, (L_resp-1)) -> already zero, but be explicit
+        // Zero the (L_resp-1) lead before rev_base; already zero, kept explicit for clarity.
         for i in 0..l_resp - 1 {
             imp_lpc_rev[rev_base - (l_resp - 1) + i] = 0.0;
         }
@@ -1871,14 +1858,10 @@ impl CelpEncoder {
                 zir_tmp[zt - state_len + i] =
                     self.state_wght_buf[SMPL_LPC_ORDER + (fcb_subfrlen - state_len) + i];
             }
-            // filt_ar16(zir_lpc_tmp, L_resp, predcoef, zir_lpc_tmp) in place: y_base=zt, x is the same.
-            // The AR reads y[base-16..] i.e. the just-copied history, and writes y[base..].
+            // In-place AR over zir_tmp at base zt (x==y). The input term x[n] for n in 0..L_resp is
+            // the zeroed region, read before being overwritten, while y[n-16..n-1] supply the
+            // just-copied history; writing y[n] after reading x[n] keeps the aliasing safe.
             {
-                // C calls filt_ar16(zir_lpc_tmp, L_resp, predcoef, zir_lpc_tmp): x==y. The input x[n]
-                // for n in 0..L_resp is the zeroed region (zir_lpc_tmp[0..L_resp]=0). So x is read
-                // before being overwritten — but since x==y and we write y[n] after reading x[n], and
-                // x[n] (==y[n]) is read as the *input* term while y[n-16..n-1] are history. Replicate
-                // with an explicit in-place AR over zir_tmp at base zt.
                 for nn in 0..l_resp {
                     let mut res = zir_tmp[zt + nn]; // x[nn] (currently 0 in [0..L_resp])
                     for i in 0..16 {
@@ -2068,9 +2051,10 @@ impl CelpEncoder {
             }
         }
 
-        // exc_lpc = exc_fcb (last r = MAIN); for voiced add the ACB contribution. The C's trailing
-        // `smpl_sub_vec_inplace(acb, res_ltp)` mutates only the throwaway plotting buffer `res_ltp`,
-        // NOT exc_lpc, so the excitation fed back into the ACB state is exactly exc_fcb + acb.
+        // exc_lpc = exc_fcb (last r = MAIN); for voiced add the ACB contribution. The reference's
+        // trailing `smpl_sub_vec_inplace(acb, res_ltp)` mutates only the throwaway plotting buffer
+        // `res_ltp`, NOT exc_lpc, so the excitation fed back into the ACB state is exactly
+        // exc_fcb + acb.
         let mut exc_lpc = vec![0.0f32; fcb_subfrlen];
         exc_lpc.copy_from_slice(&exc_fcb[..fcb_subfrlen]);
         if voiced {
@@ -2086,7 +2070,7 @@ impl CelpEncoder {
 
         // Update adaptive codebook state: shift down by fcb_subfrlen (keeping acb_state_len -
         // 2*fcb_subfrlen elements) and write exc_lpc at acb_state_len - 2*fcb_subfrlen, leaving the
-        // trailing fcb_subfrlen untouched (mirrors smpl_celp.c memmove/memcpy, not an append-at-end).
+        // trailing fcb_subfrlen untouched (an in-place shift, not an append-at-end).
         self.acb_state
             .copy_within(fcb_subfrlen..self.acb_state_len - fcb_subfrlen, 0);
         let write_off = self.acb_state_len - 2 * fcb_subfrlen;
@@ -2148,9 +2132,7 @@ impl CelpEncoder {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tier 7 — survivor distribution (smpl_distribute_fcb_surv)
-// ---------------------------------------------------------------------------
+// Tier 7: survivor distribution.
 
 pub(crate) fn smpl_distribute_fcb_surv(numsurv: &mut [i16], max_pulses: i32, tot_surv: i32) {
     debug_assert!(max_pulses <= 256);
@@ -2181,15 +2163,6 @@ pub(crate) fn smpl_distribute_fcb_surv(numsurv: &mut [i16], max_pulses: i32, tot
     }
 }
 
-/// Linear FCB gain for an unvoiced subframe gain index (`fcbgains_uv[idx]`). This is the per-pulse
-/// excitation amplitude the real decoder applies; the integration maps it onto the SILK gain so the
-/// LB-core synthesis reconstructs at the codec's level.
-pub(crate) fn smpl_celp_uv_gain(gain_idx: i16) -> f32 {
-    let t = celp_tables();
-    let idx = (gain_idx.max(0) as usize).min(SMPL_UV_GAIN_IDX_LEN);
-    t.fcbgains_uv[idx]
-}
-
 /// The high-rate ACB gain codebook (`smpl_cb_acbgains_hr_Q14`), for the decoder ACB synthesis.
 pub(crate) fn cb_acbgains_hr_q14() -> &'static [i16] {
     &SMPL_CB_ACBGAINS_HR_Q14
@@ -2198,6 +2171,136 @@ pub(crate) fn cb_acbgains_hr_q14() -> &'static [i16] {
 /// The low-rate ACB gain codebook (`smpl_cb_acbgains_lr_Q14`).
 pub(crate) fn cb_acbgains_lr_q14() -> &'static [i16] {
     &SMPL_CB_ACBGAINS_LR_Q14
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tables_build_and_have_expected_shapes() {
+        let t = celp_tables();
+        // fcbgains_v[0] = 10^(0.05 * -100) and step 3dB.
+        assert!((t.fcbgains_v[0] - 10f32.powf(0.05 * -100.0)).abs() < 1e-9);
+        assert!((t.fcbgains_v[33] - 10f32.powf(0.05 * (33.0 * 3.0 - 100.0))).abs() < 1e-6);
+        // fcbgains_uv spans -90..0 dB in 1dB steps; index 90 == 0 dB == 1.0.
+        assert!((t.fcbgains_uv[90] - 1.0).abs() < 1e-6);
+        assert!((t.fcbgains_uv[0] - 10f32.powf(0.05 * -90.0)).abs() < 1e-9);
+        // inv-prob tables are positive (2^bits).
+        assert!(t.acbg_inv_prob_lr.iter().all(|&v| v > 0.0));
+        assert!(t.fcbg_v_inv_prob.iter().all(|&v| v > 0.0));
+    }
+
+    #[test]
+    fn dcmf_to_cmf_is_integer_exact() {
+        // Reproduce the first acbgains_lr row through the integer path; the result must be a strictly
+        // increasing u16 sequence starting at 0 (cumulative).
+        let mut cmf = [0u16; SMPL_ACBG_N + 1];
+        smpl_dcmf_to_cmf(&SMPL_ACBGAINS_DCMF_LR[..SMPL_ACBG_N], SMPL_ACBG_N, &mut cmf);
+        assert_eq!(cmf[0], 0);
+        for w in cmf.windows(2) {
+            assert!(w[1] > w[0]);
+        }
+    }
+
+    #[test]
+    fn encode_unvoiced_runs() {
+        let perc_resp_len = 32usize;
+        let fcb_subfrlen = 80usize;
+        let mut enc = CelpEncoder::new(false, perc_resp_len, fcb_subfrlen, 4);
+        let res_lpc: Vec<f32> = (0..fcb_subfrlen)
+            .map(|i| ((i as f32 * 0.3).sin()) * 0.1)
+            .collect();
+        let mut predcoef = [0.0f32; 17];
+        predcoef[0] = 1.0;
+        predcoef[1] = -0.5;
+        let perc_wght_resp: Vec<f32> = (0..perc_resp_len)
+            .map(|i| if i == 0 { 1.0 } else { 0.0 })
+            .collect();
+        // Unvoiced: lags[1] <= 0.
+        let lags = [0.0f32, 0.0, 0.0];
+        let surv = [1i16; SMPL_MAX_PULSES_PER_SF];
+        let out = enc.encode_subframe(
+            &res_lpc,
+            &predcoef,
+            &perc_wght_resp,
+            &lags,
+            [1.0, 1.0],
+            [8, 8],
+            &surv,
+        );
+        assert_eq!(out.acb_idx[SMPL_CELP_IDX_MAIN], -1);
+        assert_eq!(out.exc_lpc.len(), fcb_subfrlen);
+        assert!(out.n_pulses[SMPL_CELP_IDX_MAIN] >= 0);
+    }
+
+    #[test]
+    fn encode_voiced_runs() {
+        let perc_resp_len = 32usize;
+        let fcb_subfrlen = 80usize;
+        let mut enc = CelpEncoder::new(false, perc_resp_len, fcb_subfrlen, 4);
+        // Prime acb_state with a periodic signal so the LTP basis is meaningful.
+        for (i, v) in enc.acb_state.iter_mut().enumerate() {
+            *v = ((i as f32) * 0.2).sin();
+        }
+        let res_lpc: Vec<f32> = (0..fcb_subfrlen)
+            .map(|i| ((i as f32 * 0.25).sin()) * 0.2)
+            .collect();
+        let mut predcoef = [0.0f32; 17];
+        predcoef[0] = 1.0;
+        predcoef[1] = -0.4;
+        let perc_wght_resp: Vec<f32> = (0..perc_resp_len)
+            .map(|i| if i == 0 { 1.0 } else { 0.0 })
+            .collect();
+        // Voiced: integer lag 60 for both 40-sample sub-blocks (fcb_subfrlen/40 = 2).
+        let lags = [60.0f32, 60.0, 60.0];
+        let surv = [2i16; SMPL_MAX_PULSES_PER_SF];
+        let out = enc.encode_subframe(
+            &res_lpc,
+            &predcoef,
+            &perc_wght_resp,
+            &lags,
+            [1.0, 1.0],
+            [6, 6],
+            &surv,
+        );
+        assert!(out.acb_idx[SMPL_CELP_IDX_MAIN] >= 0);
+        assert_eq!(out.exc_lpc.len(), fcb_subfrlen);
+    }
+
+    #[test]
+    fn encode_voiced_fractional_lag_greedy_runs() {
+        // High-rate (low_rate=false) + surv[max-2]==1 triggers the greedy search path; a fractional
+        // lag exercises the interpolation branch of smpl_syn_ltp_basis.
+        let perc_resp_len = 32usize;
+        let fcb_subfrlen = 80usize;
+        let mut enc = CelpEncoder::new(false, perc_resp_len, fcb_subfrlen, 4);
+        for (i, v) in enc.acb_state.iter_mut().enumerate() {
+            *v = ((i as f32) * 0.17).sin();
+        }
+        let res_lpc: Vec<f32> = (0..fcb_subfrlen)
+            .map(|i| ((i as f32 * 0.25).sin()) * 0.2)
+            .collect();
+        let mut predcoef = [0.0f32; 17];
+        predcoef[0] = 1.0;
+        predcoef[1] = -0.4;
+        let perc_wght_resp: Vec<f32> = (0..perc_resp_len)
+            .map(|i| if i == 0 { 1.0 } else { 0.0 })
+            .collect();
+        let lags = [55.5f32, 55.5, 55.5]; // fractional
+        let surv = [1i16; SMPL_MAX_PULSES_PER_SF];
+        let out = enc.encode_subframe(
+            &res_lpc,
+            &predcoef,
+            &perc_wght_resp,
+            &lags,
+            [1.0, 1.0],
+            [4, 4],
+            &surv,
+        );
+        assert!(out.acb_idx[SMPL_CELP_IDX_MAIN] >= 0);
+        assert_eq!(out.exc_lpc.len(), fcb_subfrlen);
+    }
 }
 ```
 
