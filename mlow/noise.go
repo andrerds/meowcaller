@@ -118,10 +118,10 @@ func smplGetEnv(exc []float32, length int, smthCoef float32, smthState *float32,
 	gainSmthCoef := gainCoef * smthCoef
 	i := 0
 	for i+3 < length {
-		tmp0 := exc[i]*exc[i] + exc[i+1]*exc[i+1]
-		tmp1 := exc[i+2]*exc[i+2] + exc[i+3]*exc[i+3]
-		y1 := gainCoef*tmp1 + gainSmthCoef*tmp0 + smthCoef2*state
-		y0 := gainCoef*tmp0 + smthCoef*state
+		tmp0 := float32(exc[i]*exc[i]) + float32(exc[i+1]*exc[i+1])
+		tmp1 := float32(exc[i+2]*exc[i+2]) + float32(exc[i+3]*exc[i+3])
+		y1 := float32(gainCoef*tmp1) + float32(gainSmthCoef*tmp0) + float32(smthCoef2*state)
+		y0 := float32(gainCoef*tmp0) + float32(smthCoef*state)
 		env[i] = float32(math.Sqrt(float64(y0)))
 		env[i+1] = env[i]
 		env[i+2] = float32(math.Sqrt(float64(y1)))
