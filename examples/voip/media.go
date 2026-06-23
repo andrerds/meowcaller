@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	meowcaller "github.com/purpshell/meowcaller"
@@ -261,10 +262,15 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 		return err
 	}
 
+	// relayRx counts packets received from the relay, so the keepalive can warn if
+	// the relay never answers our allocate.
+	var relayRx atomic.Uint64
+
 	// Keepalive: re-send the allocate + a WhatsApp ping ~1 Hz.
 	go func() {
 		t := time.NewTicker(time.Second)
 		defer t.Stop()
+		ticks := 0
 		for {
 			select {
 			case <-ctx.Done():
@@ -278,6 +284,9 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 				return
 			}
 			_, _ = ch.Send(ping[:])
+			if ticks++; relayRx.Load() == 0 && (ticks == 3 || ticks == 8) {
+				log.Printf("⚠ no relay response after %ds (re-sent allocate %d×) — the relay isn't accepting our STUN Allocate", ticks, ticks)
+			}
 		}
 	}()
 
@@ -310,7 +319,7 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 	// STUN binding request gets a binding-success reply (ICE consent freshness, RFC
 	// 7675); without it the relay drops the binding and the peer's call fails.
 	buf := make([]byte, 1500)
-	var rtpIn, consent uint64
+	var rtpIn, nonRtpLogged uint64
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -319,9 +328,13 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 		if err != nil {
 			return fmt.Errorf("relay recv: %w", err)
 		}
+		relayRx.Add(1)
 		pkt := buf[:n]
 		if relay.ClassifyRelayPacket(pkt) != relay.RelayPacketRtp {
-			if mt, ok := stun.StunMessageType(pkt); ok && mt == stun.MsgBindingRequest {
+			mt, isStun := stun.StunMessageType(pkt)
+			// Answer the relay's STUN binding requests with a binding-success (ICE
+			// consent freshness, RFC 7675) or the relay drops the binding.
+			if isStun && mt == stun.MsgBindingRequest {
 				if txid, ok := stun.StunTransactionID(pkt); ok && len(txid) == 12 {
 					var tx [12]byte
 					copy(tx[:], txid)
@@ -329,9 +342,26 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 					if _, err := ch.Send(resp); err != nil {
 						return fmt.Errorf("relay send binding-success: %w", err)
 					}
-					if consent++; consent == 1 {
-						log.Printf("🤝 relay consent: answering STUN binding requests (keeps the media path alive)")
+				}
+			}
+			// Diagnostic: log the first 30 non-RTP packets so the relay handshake is visible.
+			if nonRtpLogged < 30 {
+				nonRtpLogged++
+				switch {
+				case stun.IsAllocateError(pkt):
+					if code, ok := stun.ParseStunErrorCode(pkt); ok {
+						log.Printf("◀ relay: STUN ALLOCATE ERROR code=%d (%dB) — allocate rejected", code, n)
+					} else {
+						log.Printf("◀ relay: STUN allocate error (%dB) — allocate rejected", n)
 					}
+				case isStun && mt == stun.MsgBindingRequest:
+					log.Printf("◀ relay: STUN binding-request → answered binding-success (%dB)", n)
+				case stun.IsAllocateOrBindingSuccess(pkt):
+					log.Printf("◀ relay: STUN success type=0x%04x (%dB)", mt, n)
+				case isStun:
+					log.Printf("◀ relay: STUN type=0x%04x (%dB)", mt, n)
+				default:
+					log.Printf("◀ relay: non-RTP packet (%dB, first byte 0x%02x)", n, pkt[0])
 				}
 			}
 			continue
