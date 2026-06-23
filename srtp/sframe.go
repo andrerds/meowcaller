@@ -57,11 +57,10 @@ func DeriveE2eSframeKeyForParticipant(callKey []byte, participantID string) ([]b
 // salt, label "warp auth key".
 func DeriveWarpAuthKey(callKey []byte) ([]byte, error) {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/sframe.rs#L56-L66
-	// TODO
-	// agent suggestion: if len(callKey)!=32 return errBadCallKeyLen; util.HKDFSHA256(nil, callKey,
-	// []byte(KDFLabelWarpAuth), 32). Left a stub — no KAT here; validate under #24 warp.
-	// human input:
-	return nil, nil
+	if len(callKey) != 32 {
+		return nil, errBadCallKeyLen
+	}
+	return util.HKDFSHA256(nil, callKey, []byte(KDFLabelWarpAuth), 32)
 }
 
 // counterToIV builds the 16-byte GCM nonce: 8 zero bytes then counter as LE uint64.

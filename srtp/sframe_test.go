@@ -56,6 +56,28 @@ func TestSframeParticipantKeyAndLabel(t *testing.T) {
 	}
 }
 
+// TestDeriveWarpAuthKey checks the WARP auth key derivation against an independently
+// computed HKDF-SHA256 vector (empty salt, IKM = callKey, info = "warp auth key",
+// L = 32) for kats.json's callKey, and the <32-byte length guard.
+func TestDeriveWarpAuthKey(t *testing.T) {
+	k := loadKat(t)
+	callKey := mustHex(t, k.Inputs.CallKey)
+
+	// Independently computed (RFC 5869 HKDF-SHA256, empty salt) from the captured callKey.
+	const wantWarpAuthKey = "6c768f61c7bd16f8c022b58d6a9f01ab832abe95e27538a7d6c584a26b8e0734"
+	got, err := DeriveWarpAuthKey(callKey)
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if hex.EncodeToString(got) != wantWarpAuthKey {
+		t.Errorf("warp auth key = %x, want %s", got, wantWarpAuthKey)
+	}
+
+	if _, err := DeriveWarpAuthKey(callKey[:31]); err != errBadCallKeyLen {
+		t.Errorf("short callKey error = %v, want errBadCallKeyLen", err)
+	}
+}
+
 // TestSframeCounterIVAndHeader checks the GCM nonce and the varint header (with a
 // parse round-trip) against kats.json.
 func TestSframeCounterIVAndHeader(t *testing.T) {
