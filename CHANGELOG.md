@@ -7,6 +7,30 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### audit — behavioral validation against the Rust reference (multi-agent)
+- Ran a 28-module Go-vs-Rust behavioral audit (KAT + line-for-line fidelity +
+  adversarial refutation). Result: **0 real behavioral divergences**; the flagged
+  items were datasheet staleness, a provable CDF-accessor equivalence (#16 LR
+  filt), and one genuine stub (#20). Fixes below.
+
+### srtp/sframe — implement DeriveWarpAuthKey (#20, KAT-verified)
+- Ported `derive_warp_auth_key`: `len==32` guard then HKDF-SHA256(empty salt, ikm
+  = callKey, info = "warp auth key", 32). Was a `(nil,nil)` stub. Added a KAT
+  against an independently computed HKDF-SHA256 vector — passes. Closes the #20
+  functional gap.
+
+### mlow/noise — FMA-defeat casts in smplGetEnv (#11)
+- Wrapped the four load-bearing products in `smplGetEnv`'s loop in `float32(...)`
+  so Go can't fuse `a*b + c` into a single-rounding FMA (the reference rounds each
+  multiply separately). No observed divergence before, but the protective casts
+  AGENTS.md mandates were missing. gennoise KAT still passes.
+
+### MODULES.md — status corrections from the audit
+- #08 pitch: was `verified (decode; estimator scaffolded)` — the estimator is
+  KAT-verified (`pitchio_ground_truth.json`); corrected to reflect that.
+- #13 synth: was `verified (...)` but `TestSynth` is `t.Skip`'d (no standalone
+  `SynthInternalFrame` vector); corrected to `partial` per the status rule.
+
 ### call — module #28 KAT-verified (reference `41095d4e6ba4610e054e9ede3af1d5e88a83faee`)
 - Implement the `CallRegistry` (root package `meowcaller`, porting `src/voip/registry.rs`):
   the thread-safe per-call map with `Insert`/`SetMediaTask`/`Phase`/`Transition`/

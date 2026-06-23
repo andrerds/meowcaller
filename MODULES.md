@@ -26,12 +26,12 @@ confirmed when the module is reached.
 | 05 | lsf | `mlow` | rangecoder, mem | mlow-lsf.md | `mlow/smpl_decode.rs` | `lsf_vectors.json` | verified |
 | 06 | pulse | `mlow` | rangecoder, mem | mlow-pulse.md | `mlow/smpl_pulse.rs` | `pulse_vectors.json` | verified |
 | 07 | gains | `mlow` | rangecoder, mem, pulse | mlow-gains.md | `mlow/smpl_gains.rs` | `gains_vectors.json` | verified |
-| 08 | pitch | `mlow` | rangecoder, mem, lsf, pulse | mlow-pitch.md | `mlow/smpl_pitch.rs` | `pitch_vectors.json` | verified (decode; estimator scaffolded) |
+| 08 | pitch | `mlow` | rangecoder, mem, lsf, pulse | mlow-pitch.md | `mlow/smpl_pitch.rs` | `pitch_vectors.json` | verified (decode + estimator; estimator KAT pitchio_ground_truth.json) |
 | 09 | lsf_quant | `mlow` | lpc | mlow-lsf_quant.md | `mlow/smpl_lsf_quant.rs` | `lsf_quant_io.json` | verified |
 | 10 | postfilter | `mlow` | — | mlow-postfilter.md | `mlow/smpl_*postfilter.rs`, `smpl_harmcomb.rs` | (e2e) | verified (HP comb + harmonic; Region-1 comb gated/stub) |
 | 11 | noise | `mlow` | — | mlow-noise.md | `mlow/smpl_gennoise.rs` | `gennoise_vectors.json` | verified (gennoise core; perc/bitrate scaffolded w/ encoder) |
 | 12 | vad | `mlow` | — | mlow-vad.md | `mlow/smpl_vad.rs` | `vad_ground_truth.json` | verified |
-| 13 | synth | `mlow` | lsf, lsf_quant, postfilter, noise | mlow-synth.md | `mlow/smpl_synth.rs`, `smpl_celpdec.rs` | (e2e) | verified (CELP path via #15 decoder e2e; reconstruct + excitation KATs; SynthInternalFrame alt now exercised via encoder tone roundtrip) |
+| 13 | synth | `mlow` | lsf, lsf_quant, postfilter, noise | mlow-synth.md | `mlow/smpl_synth.rs`, `smpl_celpdec.rs` | (e2e) | partial (CELP path verified via #15 e2e + reconstruct/excitation KATs; TestSynth skipped — SynthInternalFrame has no standalone vector, only tone-roundtrip corr) |
 | 14 | red | `mlow` | rangecoder, toc | mlow-red.md | `mlow/red.rs` | (inline) | verified |
 | 15 | decoder | `mlow` | lsf, pulse, pitch, gains, synth, postfilter, noise, red | mlow-decoder.md | `mlow/decoder.rs` | `e2e_vectors.json`, `inbound_capture_frames.json` | verified (e2e corr 0.99 vs useSmpl) |
 | 16 | encoder | `mlow` | lpc, lsf_quant, pitch, vad | mlow-encoder.md | `mlow/encode.rs`, `analysis.rs` | `sigmode_ground_truth.json` | verified (full encoder: classifier sigmode KAT, byte-exact entropy coder on 61 frames, pitch estimator exact, CELP + analysis wired; encode->decode tone roundtrip corr 0.89) |
