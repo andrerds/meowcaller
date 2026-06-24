@@ -7,6 +7,18 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### meowcaller — scaffold the managed calling API (Client/Call/Player/audio)
+- Began lifting the entire calling orchestration out of `examples/cli` into a managed,
+  high-level library API so consumers write a handful of lines instead of hand-rolling
+  signaling/relay/media. New compiling surface: `Client` (`NewClient(wa)`, `Call`,
+  `OnIncomingCall`), `Call` (`Answer/Reject/Hangup`, `Subscribe/Play/Receive`, typed
+  `OnReady/OnEnd/OnStateChange`), `Player` (discord.js-style audio player with
+  `OnFinish`), and the `AudioSource`/`AudioSink` model (pure-Go `PCMStream`/`SinkFunc`;
+  WAV/MP3/Opus decoders and the CGO `Mic`/`Speaker` follow). The internal `engine`
+  (port of the example's coordinator + media loop) is stubbed; the public contract is
+  locked. Wrapping the whatsmeow client pulls its tree into the library go.mod (root is
+  the calling API; the codec stays light under `meowcaller/mlow`). Build/vet/KATs green.
+
 ### examples — move mlowtest under examples/mlow; rename voip example to cli
 - Moved `cmd/mlowtest` → `examples/mlow` (stays in the root module — it only imports
   `mlow`) and removed the now-empty `cmd/`. Renamed the `examples/voip` example module
