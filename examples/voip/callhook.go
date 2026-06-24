@@ -22,6 +22,7 @@ import (
 var (
 	callAckMu      sync.Mutex
 	callAckHandler func(*waBinary.Node)
+	callRawHandler func(*waBinary.Node) // sees the raw <call> node (with its stanza id) before whatsmeow processes it
 )
 
 // setCallAckHandler registers the callback invoked for each <ack class="call">.
@@ -31,8 +32,17 @@ func setCallAckHandler(fn func(*waBinary.Node)) {
 	callAckMu.Unlock()
 }
 
-// installCallAckHook injects an "ack" entry into whatsmeow's nodeHandlers map.
-// Call before Connect.
+// setCallRawHandler registers a callback that sees each raw <call> node before
+// whatsmeow handles it — needed for the <call> stanza id, which the CallOffer
+// event drops (it only carries the inner <offer>).
+func setCallRawHandler(fn func(*waBinary.Node)) {
+	callAckMu.Lock()
+	callRawHandler = fn
+	callAckMu.Unlock()
+}
+
+// installCallAckHook injects an "ack" entry into whatsmeow's nodeHandlers map and
+// wraps the "call" handler so we also see the raw <call> node. Call before Connect.
 func installCallAckHook(cli *whatsmeow.Client) {
 	field := reflect.ValueOf(cli).Elem().FieldByName("nodeHandlers")
 	handlers := *(*map[string]func(context.Context, *waBinary.Node))(unsafe.Pointer(field.UnsafeAddr()))
@@ -45,6 +55,18 @@ func installCallAckHook(cli *whatsmeow.Client) {
 		callAckMu.Unlock()
 		if fn != nil {
 			fn(node)
+		}
+	}
+	origCall := handlers["call"]
+	handlers["call"] = func(ctx context.Context, node *waBinary.Node) {
+		callAckMu.Lock()
+		raw := callRawHandler
+		callAckMu.Unlock()
+		if raw != nil {
+			raw(node)
+		}
+		if origCall != nil {
+			origCall(ctx, node)
 		}
 	}
 }

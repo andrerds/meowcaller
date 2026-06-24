@@ -88,14 +88,15 @@ type AcceptParams struct {
 	To           types.JID
 	CallCreator  types.JID
 	AudioRates   []string
-	RelayTe      []byte // nil = absent
-	Rte          []byte // nil = absent
-	VoipSettings []byte // nil = absent
-	Capability   []byte // nil = absent
+	RelayTe      []byte          // nil = absent
+	Rte          []byte          // nil = absent
+	VoipSettings []byte          // nil = absent
+	Capability   []byte          // nil = absent
+	Metadata     waBinary.Attrs  // nil = absent
 }
 
 // BuildAccept builds <accept>: audio → [te priority=2] → net medium=2 → encopt →
-// [capability] → [rte] → [voip_settings].
+// [capability] → [metadata] → [rte] → [voip_settings].
 func BuildAccept(p *AcceptParams) waBinary.Node {
 	// Source of truth: https://github.com/oxidezap/whatsapp-rust/blob/41095d4e6ba4610e054e9ede3af1d5e88a83faee/wacore/src/voip/stanza.rs#L124-L162
 	children := make([]waBinary.Node, 0, len(p.AudioRates)+5)
@@ -109,6 +110,9 @@ func BuildAccept(p *AcceptParams) waBinary.Node {
 	children = append(children, waBinary.Node{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}})
 	if p.Capability != nil {
 		children = append(children, waBinary.Node{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: p.Capability})
+	}
+	if p.Metadata != nil {
+		children = append(children, waBinary.Node{Tag: "metadata", Attrs: p.Metadata})
 	}
 	if p.Rte != nil {
 		children = append(children, waBinary.Node{Tag: "rte", Content: p.Rte})

@@ -325,6 +325,8 @@ type callMedia struct {
 	direction string
 	started   bool
 	cancel    context.CancelFunc // tears down this call's media goroutine
+	// The callee <accept> is deferred until the caller's <mute_v2> arrives.
+	acceptPending bool
 }
 
 // coordinator answers inbound offers and brings up the media loop once the relay
@@ -373,9 +375,22 @@ func (c *coordinator) entry(callID string) *callMedia {
 	return c.cmap[callID]
 }
 
-// onOffer decrypts the callKey, answers preaccept + accept, and records relay data
-// if it rode along in the offer.
+// onOffer decrypts the callKey, sends <preaccept> then <accept> back-to-back, and
+// brings up media. The accept goes out immediately after the preaccept (the order a
+// real caller acknowledges with a <receipt>); the media/relay bind then proceeds in
+// the background. The offer <receipt> is sent separately by sendOfferReceipt (it
+// needs the raw <call> stanza id).
 func (c *coordinator) onOffer(e *events.CallOffer) {
+	// A "call ended" notification arrives offer-shaped, carrying is_call_ended/terminate_reason
+	// (e.g. accepted_elsewhere when the call was picked up on another device, often delivered
+	// from the offline queue on reconnect). It is not a live call — engaging it (preaccept/
+	// accept) just earns an "accept error 500". Ack-only; do not process.
+	oag := e.Data.AttrGetter()
+	if oag.OptionalString("is_call_ended") == "1" || oag.OptionalString("terminate_reason") != "" {
+		log.Printf("↩ ignoring already-ended offer %s (reason=%q) — not a live call", e.CallID, oag.OptionalString("terminate_reason"))
+		return
+	}
+
 	callKey, err := decryptInboundCallKey(c.ctx, c.cli, e)
 	if err != nil {
 		log.Printf("decrypt callKey for %s: %v", e.CallID, err)
@@ -383,23 +398,27 @@ func (c *coordinator) onOffer(e *events.CallOffer) {
 	}
 	log.Printf("🔑 decrypted callKey (%d bytes) for %s", len(callKey), e.CallID)
 
-	rates := []string{"8000", "16000"}
-	pre := signaling.BuildPreaccept(e.CallID, e.From, e.CallCreator, newCallID(), rates)
+	// Preaccept: single rate 16000 + encopt + capability (0105f709e4bb13), NO metadata —
+	// built inline to match the captured WA-Web preaccept body exactly (BuildPreaccept uses
+	// the preaccept-specific capability blob / both rates).
+	pre := waBinary.Node{
+		Tag:   "call",
+		Attrs: waBinary.Attrs{"to": e.From, "id": c.cli.DangerousInternals().GenerateRequestID()},
+		Content: []waBinary.Node{{
+			Tag:   "preaccept",
+			Attrs: waBinary.Attrs{"call-id": e.CallID, "call-creator": e.CallCreator},
+			Content: []waBinary.Node{
+				{Tag: "audio", Attrs: waBinary.Attrs{"enc": "opus", "rate": "16000"}},
+				{Tag: "encopt", Attrs: waBinary.Attrs{"keygen": "2"}},
+				{Tag: "capability", Attrs: waBinary.Attrs{"ver": "1"}, Content: signaling.CapabilityOffer},
+			},
+		}},
+	}
 	if err := c.cli.DangerousInternals().SendNode(c.ctx, pre); err != nil {
 		log.Printf("send preaccept: %v", err)
 		return
 	}
-	accept := signaling.BuildAccept(&signaling.AcceptParams{
-		CallID: e.CallID, To: e.From, CallCreator: e.CallCreator,
-		AudioRates: rates, Capability: signaling.CapabilityOffer,
-	})
-	// Like the offer, the <call> stanza id is supplied by the I/O layer.
-	accept.Attrs["id"] = c.cli.GenerateMessageID()
-	if err := c.cli.DangerousInternals().SendNode(c.ctx, accept); err != nil {
-		log.Printf("send accept: %v", err)
-		return
-	}
-	log.Printf("✅ accepted %s — bringing up media when the relay endpoint arrives", e.CallID)
+	log.Printf("⏳ preaccepted %s — accept deferred until mute_v2", e.CallID)
 
 	peer := e.CallCreator
 	if peer.IsEmpty() {
@@ -412,11 +431,40 @@ func (c *coordinator) onOffer(e *events.CallOffer) {
 	m.selfLID = c.cli.Store.GetLID().String()
 	m.peerLID = peer.String()
 	m.direction = "incoming"
+	m.acceptPending = true
 	if r := findRelay(e.Data); r != nil {
 		m.relay = parseRelayData(r)
 	}
-	c.persist(e.CallID, "accepted", m)
+	c.persist(e.CallID, "preaccepted", m)
 	c.maybeStart(e.CallID, m)
+}
+
+// sendAccept sends the deferred callee <accept> (once), in the WA-Web format (metadata +
+// single rate — the peer keeps the call alive with this; capability+both-rates setup_fails).
+func (c *coordinator) sendAccept(callID string, to, creator types.JID) {
+	c.mu.Lock()
+	m := c.cmap[callID]
+	if m == nil || !m.acceptPending {
+		c.mu.Unlock()
+		return
+	}
+	m.acceptPending = false
+	c.mu.Unlock()
+
+	accept := signaling.BuildAccept(&signaling.AcceptParams{
+		CallID: callID, To: to, CallCreator: creator,
+		AudioRates: []string{"16000"},
+		Metadata:   waBinary.Attrs{"peer_abtest_bucket_id_list": "125208,94276"},
+	})
+	accept.Attrs["id"] = c.cli.DangerousInternals().GenerateRequestID()
+	if err := c.cli.DangerousInternals().SendNode(c.ctx, accept); err != nil {
+		log.Printf("send accept: %v", err)
+		return
+	}
+	log.Printf("✅ accepted %s (after mute_v2)", callID)
+	if c.store != nil {
+		_ = c.store.SetPhase(c.ctx, callID, "accepted")
+	}
 }
 
 // onRelay records relay data from a relaylatency/transport stanza.
@@ -433,11 +481,80 @@ func (c *coordinator) onRelay(callID string, data *waBinary.Node) {
 	c.maybeStart(callID, m)
 }
 
-// onRelayLatency answers the caller's relaylatency probes with our own measured
-// latency to the same relays (inbound/callee only). This is the callee's half of
-// the relay election; without it the server can't pick a common relay and the
-// relay never bridges the caller's media to us. The reference's RelayLatencyParams
-// omits <destination> devices for the inbound callee, so we do too.
+// onCallRaw sees every raw <call> node before whatsmeow processes it: it sends the offer
+// <receipt>, and fires the deferred <accept> when the caller's <mute_v2> arrives (whatsmeow
+// surfaces no mute event, so this is the only place we see it).
+func (c *coordinator) onCallRaw(callNode *waBinary.Node) {
+	kids := callNode.GetChildren()
+	if len(kids) != 1 {
+		return
+	}
+	switch kids[0].Tag {
+	case "offer":
+		c.sendOfferReceipt(callNode)
+	case "mute_v2":
+		mv := kids[0].AttrGetter()
+		callID := mv.String("call-id")
+		if callID == "" {
+			return
+		}
+		log.Printf("🔇 mute_v2 received for %s — sending deferred accept", callID)
+		c.sendAccept(callID, callNode.AttrGetter().JID("from"), mv.JID("call-creator"))
+	}
+}
+
+// sendOfferReceipt sends the WA-Web/reference-style <receipt> for an incoming
+// <call><offer> (it carries the <call> stanza id, which the CallOffer event
+// drops). Real callees and the reference (send_offer_ack_receipt) send this to
+// register the device as a call participant; whatsmeow's auto <ack class="call">
+// is not a substitute.
+func (c *coordinator) sendOfferReceipt(callNode *waBinary.Node) {
+	kids := callNode.GetChildren()
+	if len(kids) != 1 || kids[0].Tag != "offer" {
+		return
+	}
+	offer := &kids[0]
+	oag := offer.AttrGetter()
+	// Skip a "call ended" notification (accepted_elsewhere etc.) — whatsmeow still auto-acks
+	// the <call>, but we don't receipt or engage an already-dead call.
+	if oag.OptionalString("is_call_ended") == "1" || oag.OptionalString("terminate_reason") != "" {
+		return
+	}
+	cag := callNode.AttrGetter()
+	stanzaID := cag.String("id")
+	caller := cag.JID("from")
+	if stanzaID == "" || caller.IsEmpty() {
+		return
+	}
+	// own "from": LID for a LID call, else PN (matches the reference).
+	ownFrom := c.cli.Store.GetJID()
+	if caller.Server == types.HiddenUserServer {
+		ownFrom = c.cli.Store.GetLID()
+	}
+	receipt := waBinary.Node{
+		Tag: "receipt",
+		Attrs: waBinary.Attrs{
+			"to":   caller,
+			"id":   stanzaID,
+			"from": ownFrom,
+		},
+		Content: []waBinary.Node{{
+			Tag: "offer",
+			Attrs: waBinary.Attrs{
+				"call-id":      oag.String("call-id"),
+				"call-creator": oag.JID("call-creator"),
+			},
+		}},
+	}
+	if err := c.cli.DangerousInternals().SendNode(c.ctx, receipt); err != nil {
+		log.Printf("send offer receipt: %v", err)
+		return
+	}
+	log.Printf("📨 sent offer receipt for %s", oag.String("call-id"))
+}
+
+// onRelayLatency answers the caller's relaylatency probes (the callee's half of the relay
+// election). It does NOT send the accept — that is deferred until the caller's <mute_v2>.
 func (c *coordinator) onRelayLatency(e *events.CallRelayLatency) {
 	c.mu.Lock()
 	m := c.cmap[e.CallID]
@@ -449,31 +566,53 @@ func (c *coordinator) onRelayLatency(e *events.CallRelayLatency) {
 	if rl == nil {
 		return
 	}
-	sent := 0
+	var probes []rlProbe
 	for i := range rl.GetChildren() {
 		te := &rl.GetChildren()[i]
 		if te.Tag != "te" {
 			continue
 		}
 		ag := te.AttrGetter()
+		probes = append(probes, rlProbe{
+			latency:   decodeLatency(ag.String("latency")),
+			relayName: ag.String("relay_name"),
+			addr:      nodeBytes(te),
+		})
+	}
+	if sent := c.sendRelayLatency(e.CallID, e.From, e.CallCreator, probes); sent > 0 {
+		log.Printf("↩ answered %d relaylatency probe(s) for %s", sent, e.CallID)
+	}
+}
+
+// rlProbe is one relay candidate from a relaylatency probe, captured so we can
+// re-send it for a second election round.
+type rlProbe struct {
+	latency   uint32
+	relayName string
+	addr      []byte
+}
+
+// sendRelayLatency emits one <relaylatency> response per probe and returns how many
+// it sent (the callee's half of the relay election).
+func (c *coordinator) sendRelayLatency(callID string, to, creator types.JID, probes []rlProbe) int {
+	sent := 0
+	for _, p := range probes {
 		resp := signaling.BuildRelayLatency(&signaling.RelayLatencyParams{
-			CallID:       e.CallID,
-			To:           e.From,
-			CallCreator:  e.CallCreator,
-			LatencyMs:    decodeLatency(ag.String("latency")),
-			RelayName:    ag.String("relay_name"),
-			AddressBytes: nodeBytes(te),
+			CallID:       callID,
+			To:           to,
+			CallCreator:  creator,
+			LatencyMs:    p.latency,
+			RelayName:    p.relayName,
+			AddressBytes: p.addr,
 		})
 		resp.Attrs["id"] = c.cli.GenerateMessageID()
 		if err := c.cli.DangerousInternals().SendNode(c.ctx, resp); err != nil {
 			log.Printf("send relaylatency: %v", err)
-			return
+			return sent
 		}
 		sent++
 	}
-	if sent > 0 {
-		log.Printf("↩ answered %d relaylatency probe(s) for %s (callee relay election)", sent, e.CallID)
-	}
+	return sent
 }
 
 // onCallAck handles an <ack class="call"> node. For an outbound offer the relay
@@ -564,6 +703,7 @@ func runListen(ctx context.Context, autoAccept bool) error {
 	}
 	coord := newCoordinator(ctx, cli, store)
 	setCallAckHandler(coord.onCallAck)
+	setCallRawHandler(coord.onCallRaw)
 
 	cli.AddEventHandler(func(evt any) {
 		switch e := evt.(type) {

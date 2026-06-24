@@ -6,8 +6,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"encoding/hex"
 	"net"
+	"os"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,6 +22,47 @@ import (
 	"github.com/purpshell/meowcaller/stun"
 	waBinary "go.mau.fi/whatsmeow/binary"
 )
+
+// pktDump writes a JSONL wire trace ({seq,t_ms,dir,kind,len,hex}) matching the reference
+// example's VOIP_DUMP, so a meowcaller run can be diffed packet-for-packet against it.
+// Gated on MEOW_DUMP (off by default).
+type pktDump struct {
+	mu    sync.Mutex
+	f     *os.File
+	seq   int
+	start time.Time
+}
+
+func newPktDump() *pktDump {
+	if os.Getenv("MEOW_DUMP") == "" {
+		return nil
+	}
+	path := fmt.Sprintf("/tmp/meow-voip-dump-%d.jsonl", os.Getpid())
+	f, err := os.Create(path)
+	if err != nil {
+		log.Printf("dump: %v", err)
+		return nil
+	}
+	log.Printf("📦 packet dump → %s", path)
+	return &pktDump{f: f, start: time.Now()}
+}
+
+func (d *pktDump) rec(dir, kind string, b []byte) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.seq++
+	fmt.Fprintf(d.f, "{\"seq\":%d,\"t_ms\":%d,\"dir\":%q,\"kind\":%q,\"len\":%d,\"hex\":%q}\n",
+		d.seq, time.Since(d.start).Milliseconds(), dir, kind, len(b), hex.EncodeToString(b))
+}
+
+func (d *pktDump) close() {
+	if d != nil && d.f != nil {
+		_ = d.f.Close()
+	}
+}
 
 // ---- relay signaling parse (port of wacore/src/voip/relay_parse.rs essentials) ----
 
@@ -39,6 +84,20 @@ type relayData struct {
 	relayKeyASCII []byte   // raw <key> content — the STUN MESSAGE-INTEGRITY key
 	relayTokens   [][]byte // indexed <token id=…>
 	endpoints     []relayEndpoint
+}
+
+// stunAttrSummary lists a STUN packet's attribute types + values (hex, capped) so the
+// relay's addressing/subscription scheme is visible in the log.
+func stunAttrSummary(pkt []byte) string {
+	var parts []string
+	for _, a := range stun.ParseStunAttributes(pkt) {
+		v := a.Value
+		if len(v) > 20 {
+			v = v[:20]
+		}
+		parts = append(parts, fmt.Sprintf("0x%04x(%dB)=%x", a.AttrType, len(a.Value), v))
+	}
+	return strings.Join(parts, " ")
 }
 
 func nodeBytes(n *waBinary.Node) []byte {
@@ -238,6 +297,8 @@ func connectAndAllocate(rd *relayData) (*relay.RelayMediaChannel, []byte, error)
 	var tx [12]byte
 	_, _ = rand.Read(tx[:])
 	allocate := stun.BuildWasmStunAllocateRequest(tx, rd.relayTokens[ep.tokenID], endpointXor, rd.relayKeyASCII)
+	log.Printf("🔑 allocate creds: relay=%s ep=%s token#%d(%dB) authToken#%d key=%dB",
+		ep.relayName, addr, ep.tokenID, len(rd.relayTokens[ep.tokenID]), ep.authTokenID, len(rd.relayKeyASCII))
 	if _, err := ch.Send(allocate); err != nil {
 		return nil, nil, fmt.Errorf("allocate send: %w", err)
 	}
@@ -255,27 +316,28 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 	}
 	defer ch.Close()
 
+	dump := newPktDump()
+	defer dump.close()
+	dump.rec("out", "allocate", allocate)
+
+	// Send a consent ping (0x0801) immediately, together with the allocate and BEFORE any
+	// RTP — exactly as the working reference does. The relay won't forward the peer's media
+	// until consent (ping → pong) is established; RTP sent before the first ping is dropped,
+	// and the relay then never bridges. (meowcaller previously didn't ping until the 1 Hz
+	// keepalive at ~t+1s, so every early RTP packet went out unconsented.)
+	{
+		var ptx [12]byte
+		_, _ = rand.Read(ptx[:])
+		initPing := stun.BuildWhatsappPing(ptx)
+		_, _ = ch.Send(initPing[:])
+		dump.rec("out", "ping", initPing[:])
+	}
+
 	ssrc, err := rtp.DeriveWasmParticipantSsrc(callID, rtp.FormatE2ESrtpParticipantID(selfLID), 0)
 	if err != nil {
 		return err
 	}
 	log.Printf("media: self=%s peer=%s ssrc=%#08x", selfLID, peerLID, ssrc)
-
-	a, err := newAudio()
-	if err != nil {
-		return err
-	}
-	defer a.close()
-	mic, stopMic, err := a.openMic()
-	if err != nil {
-		return err
-	}
-	defer stopMic()
-	speaker, stopSpeaker, err := a.openSpeaker()
-	if err != nil {
-		return err
-	}
-	defer stopSpeaker()
 
 	enc := mlow.NewMlowEncoder()
 	dec := mlow.NewMlowDecoder()
@@ -292,11 +354,34 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 	// the relay never answers our allocate.
 	var relayRx atomic.Uint64
 
-	// Keepalive: re-send the allocate + a WhatsApp ping ~1 Hz.
+	// Decoded PCM the recv loop hands to the speaker. Buffered + non-blocking so the
+	// recv loop (which also answers the relay's consent checks) never stalls on audio.
+	toSpeaker := make(chan []int16, 16)
+
+	// Fast silence detector: inbound calls are torn down by the caller within ~400ms
+	// if our relay bind never comes alive, so the 1 Hz keepalive's warning fires too
+	// late to ever be seen. Check at 400ms and 900ms and say so explicitly.
+	go func() {
+		for _, d := range []time.Duration{400 * time.Millisecond, 900 * time.Millisecond} {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(d):
+			}
+			if relayRx.Load() == 0 {
+				log.Printf("⚠ relay silent %dms after Allocate — no bytes back yet (allocate undelivered or rejected)", d.Milliseconds())
+			}
+		}
+	}()
+
+	// Keepalive: re-send the Allocate AND a WhatsApp ping (0x0801) ~1 Hz. This is exactly
+	// what the working reference does — a captured reference call sends allocate+ping every
+	// second and sends NO STUN binding-requests at all; the relay answers allocate-success
+	// (0x0103) + pong (0x0802) and bridges the peer's media. Binding-requests instead flip
+	// the relay into ICE-consent mode and the bridge never forms.
 	go func() {
 		t := time.NewTicker(time.Second)
 		defer t.Stop()
-		ticks := 0
 		for {
 			select {
 			case <-ctx.Done():
@@ -309,15 +394,93 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 			if _, err := ch.Send(allocate); err != nil {
 				return
 			}
+			dump.rec("out", "allocate", allocate)
 			_, _ = ch.Send(ping[:])
-			if ticks++; relayRx.Load() == 0 && (ticks == 3 || ticks == 8) {
-				log.Printf("⚠ no relay response after %ds (re-sent allocate %d×) — the relay isn't accepting our STUN Allocate", ticks, ticks)
+			dump.rec("out", "ping", ping[:])
+		}
+	}()
+
+	// Send loop: frame-paced from call connect, NOT gated on the mic. WhatsApp starts media
+	// on relay connection and sends DTX/silence frames for the first few seconds; the relay
+	// learns our SSRC from our FIRST RTP and won't bridge the peer's media until it sees our
+	// stream. Opening PortAudio can take >1s, so waiting for the mic means our first packet
+	// lands seconds late — after the relay has stopped wiring the bridge. Send silence until
+	// real mic frames arrive.
+	micIn := make(chan []int16, 3)
+	frameInterval := time.Duration(frameSamps) * time.Second / sampleRate
+	go func() {
+		silence := make([]float32, frameSamps)
+		ticker := time.NewTicker(frameInterval)
+		defer ticker.Stop()
+		var txCount uint64
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			frame := silence
+			select {
+			case pcm := <-micIn:
+				frame = pcmToFloat(pcm)
+			default:
+			}
+			payload, err := enc.Encode(frame)
+			if err != nil {
+				continue
+			}
+			packet, err := txPipe.ProtectAudio(payload)
+			if err != nil {
+				continue
+			}
+			if _, err := ch.Send(packet); err != nil {
+				return
+			}
+			dump.rec("out", "rtp", packet)
+			if txCount++; txCount == 1 {
+				log.Printf("📤 first RTP sent to relay (%d bytes) — outbound media flowing (silence until mic ready)", len(packet))
+			} else if txCount%250 == 0 {
+				log.Printf("📤 sent %d RTP packets to relay", txCount)
 			}
 		}
 	}()
 
-	// Send: mic → encode → protect → DataChannel.
+	// Audio devices (mic/speaker), off the relay's critical path — opening PortAudio can
+	// block >1s. Feeds mic frames to the send loop and drains decoded PCM to the speaker.
 	go func() {
+		a, err := newAudio()
+		if err != nil {
+			log.Printf("audio init: %v", err)
+			return
+		}
+		defer a.close()
+		mic, stopMic, err := a.openMic()
+		if err != nil {
+			log.Printf("open mic: %v", err)
+			return
+		}
+		defer stopMic()
+		speaker, stopSpeaker, err := a.openSpeaker()
+		if err != nil {
+			log.Printf("open speaker: %v", err)
+			return
+		}
+		defer stopSpeaker()
+		log.Printf("🎙 audio devices ready")
+
+		// Speaker pump: drain decoded PCM from the recv loop to the speaker.
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case d := <-toSpeaker:
+					speaker <- d
+				}
+			}
+		}()
+
+		// Mic pump: hand frames to the frame-paced send loop (drop if it's busy).
 		for {
 			select {
 			case <-ctx.Done():
@@ -326,16 +489,9 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 				if !ok {
 					return
 				}
-				payload, err := enc.Encode(pcmToFloat(pcm))
-				if err != nil {
-					continue
-				}
-				packet, err := txPipe.ProtectAudio(payload)
-				if err != nil {
-					continue
-				}
-				if _, err := ch.Send(packet); err != nil {
-					return
+				select {
+				case micIn <- pcm:
+				default:
 				}
 			}
 		}
@@ -345,7 +501,8 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 	// STUN binding request gets a binding-success reply (ICE consent freshness, RFC
 	// 7675); without it the relay drops the binding and the peer's call fails.
 	buf := make([]byte, 1500)
-	var rtpIn, nonRtpLogged uint64
+	var rtpIn, rtpSeen, unprotectFail, nonRtpLogged uint64
+	var dumpedAlloc, dumpedBindReq, dumpedBindOK bool
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -357,6 +514,7 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 		relayRx.Add(1)
 		pkt := buf[:n]
 		if relay.ClassifyRelayPacket(pkt) != relay.RelayPacketRtp {
+			dump.rec("in", "stun", pkt)
 			mt, isStun := stun.StunMessageType(pkt)
 			// Answer the relay's STUN binding requests with a binding-success (ICE
 			// consent freshness, RFC 7675) or the relay drops the binding.
@@ -369,6 +527,20 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 						return fmt.Errorf("relay send binding-success: %w", err)
 					}
 				}
+			}
+			// Dump the attributes of the key relay packets once each — the allocate-success
+			// and the relay's binding-request/success carry the addressing/subscription that
+			// governs how (and whether) media bridges.
+			switch {
+			case !dumpedAlloc && mt == stun.MsgAllocateSuccess:
+				dumpedAlloc = true
+				log.Printf("🔎 allocate-success attrs:%s", stunAttrSummary(pkt))
+			case !dumpedBindReq && isStun && mt == stun.MsgBindingRequest:
+				dumpedBindReq = true
+				log.Printf("🔎 relay binding-request attrs:%s", stunAttrSummary(pkt))
+			case !dumpedBindOK && mt == stun.MsgBindingSuccess:
+				dumpedBindOK = true
+				log.Printf("🔎 binding-success attrs:%s", stunAttrSummary(pkt))
 			}
 			// Diagnostic: log the first 30 non-RTP packets so the relay handshake is visible.
 			if nonRtpLogged < 30 {
@@ -392,13 +564,23 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 			}
 			continue
 		}
+		dump.rec("in", "rtp", pkt)
+		if rtpSeen++; rtpSeen == 1 {
+			log.Printf("📥 first RTP-classified packet from relay (%dB) — relay is bridging the peer's media", n)
+		}
 		_, payload, ok := rxPipe.UnprotectAudio(pkt)
 		if !ok {
+			if unprotectFail++; unprotectFail == 1 {
+				log.Printf("⚠ RTP arrived but failed to unprotect (%dB) — keying/SSRC mismatch on the recv path", n)
+			}
 			continue
 		}
-		speaker <- floatToPCM(dec.Decode(payload))
+		select {
+		case toSpeaker <- floatToPCM(dec.Decode(payload)):
+		default: // speaker not draining (audio not ready yet) — drop rather than stall consent
+		}
 		if rtpIn++; rtpIn == 1 {
-			log.Printf("🔊 first RTP from relay — inbound media flowing")
+			log.Printf("🔊 first RTP decoded from relay — inbound audio flowing")
 		}
 	}
 }
