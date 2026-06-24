@@ -46,6 +46,12 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
   **sanitized**: callKey, relay key, and tokens are logged as byte-lengths only,
   never their contents. No library code or KATs touched (examples is its own
   module); `go build`/`vet`/`test` clean.
+- Wired the context logger into the library calls so the demo surfaces the whole
+  stack's debug/trace: `WithLogger` on `NewMediaPipeline`/`NewMlowEncoder`/
+  `NewMlowDecoder`/`ConnectRelayMedia`, and the variadic logger on the `rtp`/`stun`
+  calls. Added a `MEOW_LOG_LEVEL` env control (default `debug`) so
+  `MEOW_LOG_LEVEL=trace voip call …` shows the per-frame trace across mlow, srtp,
+  rtp, stun, relay, and the pipeline.
 
 ### audit — behavioral validation against the Rust reference (multi-agent)
 - Ran a 28-module Go-vs-Rust behavioral audit (KAT + line-for-line fidelity +

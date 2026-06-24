@@ -28,8 +28,12 @@ func main() {
 	// packages only accept a logger from the context). A console writer keeps the demo
 	// readable; the logger is embedded in the context so every callee resolves it with
 	// zerolog.Ctx(ctx).
+	level := zerolog.DebugLevel
+	if lvl, err := zerolog.ParseLevel(os.Getenv("MEOW_LOG_LEVEL")); err == nil && lvl != zerolog.NoLevel {
+		level = lvl
+	}
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05.000"}).
-		Level(zerolog.DebugLevel).
+		Level(level).
 		With().Timestamp().Logger()
 
 	if len(os.Args) < 2 {

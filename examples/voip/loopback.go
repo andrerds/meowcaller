@@ -36,8 +36,8 @@ func runLoopback(ctx context.Context) error {
 	}
 	defer stopSpeaker()
 
-	enc := mlow.NewMlowEncoder()
-	dec := mlow.NewMlowDecoder()
+	enc := mlow.NewMlowEncoder(mlow.WithLogger(*log))
+	dec := mlow.NewMlowDecoder(mlow.WithLogger(*log))
 
 	// Throwaway callKey; same LID both directions so the loopback round-trips
 	// (a real call derives send keys from the self LID, recv from the peer LID).
@@ -46,11 +46,11 @@ func runLoopback(ctx context.Context) error {
 		return err
 	}
 	const lid = "10000000000000:0@lid"
-	send, err := meowcaller.NewMediaPipeline(callKey[:], lid, lid, loopbackSSRC, frameSamps)
+	send, err := meowcaller.NewMediaPipeline(callKey[:], lid, lid, loopbackSSRC, frameSamps, meowcaller.WithLogger(*log))
 	if err != nil {
 		return fmt.Errorf("send pipeline: %w", err)
 	}
-	recv, err := meowcaller.NewMediaPipeline(callKey[:], lid, lid, loopbackSSRC, frameSamps)
+	recv, err := meowcaller.NewMediaPipeline(callKey[:], lid, lid, loopbackSSRC, frameSamps, meowcaller.WithLogger(*log))
 	if err != nil {
 		return fmt.Errorf("recv pipeline: %w", err)
 	}

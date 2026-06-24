@@ -270,7 +270,7 @@ func connectAndAllocate(ctx context.Context, rd *relayData) (*relay.RelayMediaCh
 	}
 	done := make(chan result, 1)
 	go func() {
-		ch, err := relay.ConnectRelayMedia(addr)
+		ch, err := relay.ConnectRelayMedia(addr, relay.WithLogger(*log))
 		done <- result{ch, err}
 	}()
 	var ch *relay.RelayMediaChannel
@@ -291,13 +291,13 @@ func connectAndAllocate(ctx context.Context, rd *relayData) (*relay.RelayMediaCh
 	if len(rd.relayKeyASCII) == 0 {
 		return nil, nil, fmt.Errorf("relay has no <key>")
 	}
-	endpointXor, ok := stun.EncodeXorRelayEndpoint(ep.addresses[0].ipv4, ep.addresses[0].port)
+	endpointXor, ok := stun.EncodeXorRelayEndpoint(ep.addresses[0].ipv4, ep.addresses[0].port, *log)
 	if !ok {
 		return nil, nil, fmt.Errorf("bad endpoint XOR")
 	}
 	var tx [12]byte
 	_, _ = rand.Read(tx[:])
-	allocate := stun.BuildWasmStunAllocateRequest(tx, rd.relayTokens[ep.tokenID], endpointXor, rd.relayKeyASCII)
+	allocate := stun.BuildWasmStunAllocateRequest(tx, rd.relayTokens[ep.tokenID], endpointXor, rd.relayKeyASCII, *log)
 	log.Info().
 		Str("relay_name", ep.relayName).
 		Str("addr", addr.String()).
@@ -336,12 +336,12 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 	{
 		var ptx [12]byte
 		_, _ = rand.Read(ptx[:])
-		initPing := stun.BuildWhatsappPing(ptx)
+		initPing := stun.BuildWhatsappPing(ptx, *log)
 		_, _ = ch.Send(initPing[:])
 		dump.rec("out", "ping", initPing[:])
 	}
 
-	ssrc, err := rtp.DeriveWasmParticipantSsrc(callID, rtp.FormatE2ESrtpParticipantID(selfLID), 0)
+	ssrc, err := rtp.DeriveWasmParticipantSsrc(callID, rtp.FormatE2ESrtpParticipantID(selfLID), 0, *log)
 	if err != nil {
 		return err
 	}
@@ -351,13 +351,13 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 		Str("ssrc", fmt.Sprintf("0x%08x", ssrc)).
 		Msg("media session")
 
-	enc := mlow.NewMlowEncoder()
-	dec := mlow.NewMlowDecoder()
-	txPipe, err := meowcaller.NewMediaPipeline(callKey, selfLID, peerLID, ssrc, frameSamps)
+	enc := mlow.NewMlowEncoder(mlow.WithLogger(*log))
+	dec := mlow.NewMlowDecoder(mlow.WithLogger(*log))
+	txPipe, err := meowcaller.NewMediaPipeline(callKey, selfLID, peerLID, ssrc, frameSamps, meowcaller.WithLogger(*log))
 	if err != nil {
 		return err
 	}
-	rxPipe, err := meowcaller.NewMediaPipeline(callKey, selfLID, peerLID, ssrc, frameSamps)
+	rxPipe, err := meowcaller.NewMediaPipeline(callKey, selfLID, peerLID, ssrc, frameSamps, meowcaller.WithLogger(*log))
 	if err != nil {
 		return err
 	}
@@ -402,7 +402,7 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 			}
 			var tx [12]byte
 			_, _ = rand.Read(tx[:])
-			ping := stun.BuildWhatsappPing(tx)
+			ping := stun.BuildWhatsappPing(tx, *log)
 			if _, err := ch.Send(allocate); err != nil {
 				return
 			}
@@ -534,7 +534,7 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 				if txid, ok := stun.StunTransactionID(pkt); ok && len(txid) == 12 {
 					var tx [12]byte
 					copy(tx[:], txid)
-					resp := stun.EncodeStunRequest(stun.MsgBindingSuccess, tx, nil, rd.relayKeyASCII, true)
+					resp := stun.EncodeStunRequest(stun.MsgBindingSuccess, tx, nil, rd.relayKeyASCII, true, *log)
 					if _, err := ch.Send(resp); err != nil {
 						return fmt.Errorf("relay send binding-success: %w", err)
 					}
@@ -559,7 +559,7 @@ func runMedia(ctx context.Context, callID string, callKey []byte, selfLID, peerL
 				nonRtpLogged++
 				switch {
 				case stun.IsAllocateError(pkt):
-					if code, ok := stun.ParseStunErrorCode(pkt); ok {
+					if code, ok := stun.ParseStunErrorCode(pkt, *log); ok {
 						log.Debug().Str("kind", "allocate-error").Int("code", int(code)).Int("bytes", n).Msg("relay packet")
 					} else {
 						log.Debug().Str("kind", "allocate-error").Int("bytes", n).Msg("relay packet")
