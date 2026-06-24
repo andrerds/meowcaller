@@ -9,7 +9,6 @@ import (
 // captured sample blob (use_mlow_codec_v1="true", frame_ms="60",
 // target_bitrate="24000"). Skipped until ParseVoipSettings lands.
 func TestParseVoipSettings(t *testing.T) {
-	t.Skip("blocked: signaling.ParseVoipSettings is a stub; enable when implemented")
 	raw, err := os.ReadFile("testdata/voip_settings_sample.json")
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +34,6 @@ func TestParseVoipSettings(t *testing.T) {
 // TestParseVoipSettingsOpus pins the codec lever: use_mlow_codec_v1="false" must
 // parse to UseMlowCodecV1=false. Skipped until ParseVoipSettings lands.
 func TestParseVoipSettingsOpus(t *testing.T) {
-	t.Skip("blocked: signaling.ParseVoipSettings is a stub; enable when implemented")
 	vs, err := ParseVoipSettings([]byte(`{"encode":{"use_mlow_codec_v1":"false","frame_ms":"60"}}`))
 	if err != nil {
 		t.Fatalf("ParseVoipSettings: %v", err)

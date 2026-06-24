@@ -28,9 +28,8 @@ func (c AudioCodec) String() string {
 // use. Absent settings or an explicit MLow selection keep the call on MLow; only
 // use_mlow_codec_v1=false switches it to Opus.
 func selectAudioCodec(vs *signaling.VoipSettings) AudioCodec {
-	// TODO
-	// agent suggestion: return AudioCodecMlow when vs == nil || !vs.Present ||
-	// vs.UseMlowCodecV1; otherwise AudioCodecOpus.
-	// human input:
-	return AudioCodecMlow
+	if vs == nil || !vs.Present || vs.UseMlowCodecV1 {
+		return AudioCodecMlow
+	}
+	return AudioCodecOpus
 }

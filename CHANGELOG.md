@@ -7,6 +7,16 @@ All notable changes to meowcaller, tracked per module. Format loosely follows
 
 ## [Unreleased]
 
+### opus — implement voip_settings parse + codec selection
+- Landed the bodies scaffolded below. `ParseVoipSettings` json-decodes the
+  stringly-typed blob (`encode.use_mlow_codec_v1`/`frame_ms`, `rc.target_bitrate`),
+  defaulting `UseMlowCodecV1` to true unless the key is literally `"false"` (empty blob
+  → MLow). `selectAudioCodec` returns Opus only for a present, explicit
+  `use_mlow_codec_v1=false`. KATs enabled and passing
+  (`TestParseVoipSettings`/`...Opus`, `TestSelectAudioCodec`). State:
+  **implemented; KAT-verified**. build/vet/suite green. (CodeRabbit review skipped at
+  maintainer request.)
+
 ### opus — scaffold voip_settings parse + codec selection (mlow vs Opus lever)
 - First module of basic Opus support, picked when the server sets
   `encode.use_mlow_codec_v1=false`. New compiling surface, bodies are TODO:

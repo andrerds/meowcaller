@@ -10,7 +10,6 @@ import (
 // use_mlow_codec_v1=false picks Opus; everything else (nil, absent, true) stays
 // on MLow. Skipped until selectAudioCodec lands.
 func TestSelectAudioCodec(t *testing.T) {
-	t.Skip("blocked: selectAudioCodec is a stub; enable when implemented")
 	cases := []struct {
 		name string
 		vs   *signaling.VoipSettings
